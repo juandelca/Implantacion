@@ -1,0 +1,40 @@
+name: Build Civil 3D Plugin
+
+# Se activa cada vez que haces un 'push' (subes cambios)
+on: [push]
+
+jobs:
+  build:
+    # Usamos un servidor de Windows para la compilación
+    runs-on: windows-latest
+
+    steps:
+    # 1. Descarga tu código del repositorio
+    - uses: actions/checkout@v3
+
+    # 2. Configura el entorno de .NET Framework (necesario para msbuild)
+    - name: Setup .NET Framework
+      uses: microsoft/setup-msbuild@v1.1
+      with:
+        dotnet-version: '4.8'
+
+    # 3. Configura NuGet (para descargar las APIs)
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v1
+      with:
+        nuget-version: 'latest'
+
+    # 4. Restaura los paquetes (descarga las APIs de Civil 3D)
+    - name: Restore NuGet packages
+      run: nuget restore ${{ github.workspace }}\Civil3D_Phase1.csproj
+
+    # 5. Compila el proyecto
+    - name: Build project
+      run: msbuild ${{ github.workspace }}\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=AnyCPU
+
+    # 6. Sube la DLL compilada como un "artifact"
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: Civil3D-Phase1-DLL
+        path: ${{ github.workspace }}\bin\Release\Civil3D_Phase1.dll
