@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 
 /* --- Dependencias de AutoCAD --- */
-// NO pongas 'public' en estas líneas
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices; // La usaremos explícitamente
@@ -59,7 +58,6 @@ namespace Civil3D_Phase1
             // --- 1a. Seleccionar la Parcela (Polilínea) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
             peoParcela.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea. Inténtelo de nuevo.");
-            // Usamos la clase explícita de AutoCAD para evitar ambigüedad
             peoParcela.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true);
             
             PromptEntityResult perParcela = ed.GetEntity(peoParcela);
@@ -91,7 +89,6 @@ namespace Civil3D_Phase1
             // --- 1c. Seleccionar el Terreno Original (TIN Surface) ---
             PromptEntityOptions peoTerreno = new PromptEntityOptions("\nSeleccione la Superficie (Terreno Original): ");
             peoTerreno.SetRejectMessage("\nEl objeto seleccionado no es una Superficie TIN.");
-            // Usamos la clase explícita de Civil 3D
             peoTerreno.AddAllowedClass(typeof(Autodesk.Civil.DatabaseServices.TinSurface), true);
             
             PromptEntityResult perTerreno = ed.GetEntity(peoTerreno);
@@ -113,39 +110,43 @@ namespace Civil3D_Phase1
                     // --- PASO 1a: ANÁLISIS 2D (PARCELA - AFECCIONES) ---
                     ed.WriteMessage("\nIniciando Paso 1a: Cálculo del Área Neta (Parcela - Afecciones)...");
 
-                    // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.Polyline'
-                    Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPoly = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
-                    if (parcelaPoly == null || !parcelaPoly.Closed)
+                    Autodesk.AutoCAD.DatabaseServices.Polyline parcelaOriginal = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                    if (parcelaOriginal == null || !parcelaOriginal.Closed)
                     {
                         ed.WriteMessage("\nError: La polilínea de parcela no es válida o no está cerrada. Abortando.");
                         tr.Abort();
                         return;
                     }
 
-                    // CORRECCIÓN AMBIGÜEDAD: Especificamos las clases de AutoCAD
-                    Autodesk.AutoCAD.DatabaseServices.DBObjectCollection parcelaCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { parcelaPoly };
+                    // --- INICIO DE LA SOLUCIÓN AL ERROR eInvalidInput ---
+                    // Creamos una COPIA "aplanada" de la parcela para asegurar que sea coplanar
+                    Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPlana = parcelaOriginal.Clone() as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                    parcelaPlana.Normal = Vector3d.ZAxis; // Forzar Normal a (0,0,1)
+                    parcelaPlana.Elevation = 0.0;     // Forzar Elevación a 0
+
+                    Autodesk.AutoCAD.DatabaseServices.DBObjectCollection parcelaCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { parcelaPlana };
                     Autodesk.AutoCAD.DatabaseServices.Region parcelaRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(parcelaCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                     
                     // Restamos cada afección
                     foreach (ObjectId afeccionId in afeccionesIds)
                     {
-                        // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.DBObject'
                         Autodesk.AutoCAD.DatabaseServices.DBObject afeccionObj = tr.GetObject(afeccionId, OpenMode.ForRead);
-                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionPoly = afeccionObj as Autodesk.AutoCAD.DatabaseServices.Polyline;
-                        if (afeccionPoly == null) continue;
-                        
-                        if (!afeccionPoly.Closed)
-                        {
-                            afeccionPoly.UpgradeOpen();
-                            afeccionPoly.Closed = true;
-                        }
+                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionOriginal = afeccionObj as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                        if (afeccionOriginal == null) continue;
 
-                        Autodesk.AutoCAD.DatabaseServices.DBObjectCollection afeccionCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { afeccionPoly };
+                        // Creamos una COPIA "aplanada" de la afección
+                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionPlana = afeccionOriginal.Clone() as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                        afeccionPlana.Normal = Vector3d.ZAxis; // Forzar Normal
+                        afeccionPlana.Elevation = 0.0;     // Forzar Elevación
+                        if (!afeccionPlana.Closed) afeccionPlana.Closed = true;
+
+                        Autodesk.AutoCAD.DatabaseServices.DBObjectCollection afeccionCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { afeccionPlana };
                         Autodesk.AutoCAD.DatabaseServices.Region afeccionRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(afeccionCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                         
-                        // CORRECCIÓN AMBIGÜEDAD: Especificamos 'BooleanOperationType'
+                        // Resta Booleana
                         parcelaRegion.BooleanOperation(Autodesk.AutoCAD.DatabaseServices.BooleanOperationType.BoolSubtract, afeccionRegion);
                     }
+                    // --- FIN DE LA SOLUCIÓN ---
                     
                     ed.WriteMessage("\nÁrea Neta 2D (Región) calculada con éxito.");
 
