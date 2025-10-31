@@ -17,13 +17,13 @@ jobs:
 
     # 3. Compila el proyecto
     - name: Build project
-      # CAMBIO: Le decimos a msbuild que use la plataforma 'x64'
-      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=x64
+      # CAMBIO: Quitamos /p:Platform=x64. El .csproj ya lo define.
+      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release
 
     # 4. Sube la DLL
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Civil3D-Phase1-DLL
-        # CAMBIO: La ruta de la DLL ahora incluye 'x64'
+        # La ruta de salida sigue siendo la correcta
         path: ${{ github.workspace }}\Implantacion\bin\x64\Release\Civil3D_Phase1.dll
