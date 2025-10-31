@@ -3,17 +3,18 @@ using System;
 using System.Collections.Generic;
 
 /* --- Dependencias de AutoCAD --- */
+// NO pongas 'public' en estas líneas
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.DatabaseServices; // La usaremos explícitamente
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
-using Autodesk.Civil.DatabaseServices;
+using Autodesk.Civil.DatabaseServices; // La usaremos explícitamente
 
-// Definimos un alias para nuestro proyecto para que sea fácil de llamar
+// NO pongas 'public' aquí
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
 
 namespace Civil3D_Phase1
@@ -33,10 +34,7 @@ namespace Civil3D_Phase1
             }
         }
 
-        public void Terminate()
-        {
-            // Este método se llama cuando se descarga el plugin o se cierra Civil 3D
-        }
+        public void Terminate() { }
     }
 
     // -----------------------------------------------------------------
@@ -61,7 +59,8 @@ namespace Civil3D_Phase1
             // --- 1a. Seleccionar la Parcela (Polilínea) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
             peoParcela.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea. Inténtelo de nuevo.");
-            peoParcela.AddAllowedClass(typeof(Polyline), true);
+            // Usamos la clase explícita de AutoCAD para evitar ambigüedad
+            peoParcela.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true);
             
             PromptEntityResult perParcela = ed.GetEntity(peoParcela);
             if (perParcela.Status != PromptStatus.OK)
@@ -77,11 +76,8 @@ namespace Civil3D_Phase1
             psoAfecciones.MessageForAdding = "\nSeleccione las Polilíneas de Afecciones (o pulse Intro para ninguna): ";
             psoAfecciones.MessageForRemoval = "\nEliminar objetos de la selección: ";
             
-            TypedValue[] tvs = new TypedValue[] {
-                new TypedValue((int)DxfCode.Start, "POLYLINE,LWPOLYLINE")
-            };
+            TypedValue[] tvs = new TypedValue[] { new TypedValue((int)DxfCode.Start, "POLYLINE,LWPOLYLINE") };
             SelectionFilter filter = new SelectionFilter(tvs);
-            
             PromptSelectionResult psrAfecciones = ed.GetSelection(psoAfecciones, filter);
             List<ObjectId> afeccionesIds = new List<ObjectId>();
 
@@ -90,15 +86,13 @@ namespace Civil3D_Phase1
                 afeccionesIds.AddRange(psrAfecciones.Value.GetObjectIds());
                 ed.WriteMessage($"\n{afeccionesIds.Count} afecciones seleccionadas.");
             }
-            else
-            {
-                ed.WriteMessage("\nNo se seleccionaron afecciones.");
-            }
+            else { ed.WriteMessage("\nNo se seleccionaron afecciones."); }
 
             // --- 1c. Seleccionar el Terreno Original (TIN Surface) ---
             PromptEntityOptions peoTerreno = new PromptEntityOptions("\nSeleccione la Superficie (Terreno Original): ");
             peoTerreno.SetRejectMessage("\nEl objeto seleccionado no es una Superficie TIN.");
-            peoTerreno.AddAllowedClass(typeof(TinSurface), true);
+            // Usamos la clase explícita de Civil 3D
+            peoTerreno.AddAllowedClass(typeof(Autodesk.Civil.DatabaseServices.TinSurface), true);
             
             PromptEntityResult perTerreno = ed.GetEntity(peoTerreno);
             if (perTerreno.Status != PromptStatus.OK)
@@ -119,61 +113,54 @@ namespace Civil3D_Phase1
                     // --- PASO 1a: ANÁLISIS 2D (PARCELA - AFECCIONES) ---
                     ed.WriteMessage("\nIniciando Paso 1a: Cálculo del Área Neta (Parcela - Afecciones)...");
 
-                    // Convertimos la polilínea de Parcela en una Región
-                    Polyline parcelaPoly = tr.GetObject(parcelaId, OpenMode.ForRead) as Polyline;
-                    if (!parcelaPoly.Closed)
+                    // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.Polyline'
+                    Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPoly = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                    if (parcelaPoly == null || !parcelaPoly.Closed)
                     {
-                        ed.WriteMessage("\nError: La polilínea de parcela no está cerrada. Abortando.");
+                        ed.WriteMessage("\nError: La polilínea de parcela no es válida o no está cerrada. Abortando.");
                         tr.Abort();
                         return;
                     }
 
-                    DBObjectCollection parcelaCurves = new DBObjectCollection();
-                    parcelaCurves.Add(parcelaPoly);
-                    Region parcelaRegion = (Region.CreateFromCurves(parcelaCurves)[0] as Region);
+                    // CORRECCIÓN AMBIGÜEDAD: Especificamos las clases de AutoCAD
+                    Autodesk.AutoCAD.DatabaseServices.DBObjectCollection parcelaCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { parcelaPoly };
+                    Autodesk.AutoCAD.DatabaseServices.Region parcelaRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(parcelaCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                     
                     // Restamos cada afección
                     foreach (ObjectId afeccionId in afeccionesIds)
                     {
-                        DBObject afeccionObj = tr.GetObject(afeccionId, OpenMode.ForRead);
-                        Polyline afeccionPoly = afeccionObj as Polyline;
-                        if (afeccionPoly == null) continue; // Ignorar si no es una polilínea válida
+                        // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.DBObject'
+                        Autodesk.AutoCAD.DatabaseServices.DBObject afeccionObj = tr.GetObject(afeccionId, OpenMode.ForRead);
+                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionPoly = afeccionObj as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                        if (afeccionPoly == null) continue;
                         
                         if (!afeccionPoly.Closed)
                         {
-                            // Si no está cerrada, intentamos cerrarla para la operación
-                            // Nota: Esto requiere abrirla para escritura
                             afeccionPoly.UpgradeOpen();
                             afeccionPoly.Closed = true;
                         }
 
-                        DBObjectCollection afeccionCurves = new DBObjectCollection();
-                        afeccionCurves.Add(afeccionPoly);
-                        Region afeccionRegion = (Region.CreateFromCurves(afeccionCurves)[0] as Region);
+                        Autodesk.AutoCAD.DatabaseServices.DBObjectCollection afeccionCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { afeccionPoly };
+                        Autodesk.AutoCAD.DatabaseServices.Region afeccionRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(afeccionCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                         
-                        // Esta es la operación de resta booleana
-                        parcelaRegion.BooleanOperation(BooleanOperationType.BoolSubtract, afeccionRegion);
+                        // CORRECCIÓN AMBIGÜEDAD: Especificamos 'BooleanOperationType'
+                        parcelaRegion.BooleanOperation(Autodesk.AutoCAD.DatabaseServices.BooleanOperationType.BoolSubtract, afeccionRegion);
                     }
                     
-                    // Al final del bucle, 'parcelaRegion' contiene el 'Area_Neta'
                     ed.WriteMessage("\nÁrea Neta 2D (Región) calculada con éxito.");
 
                     // --- PASO 1b: ANÁLISIS 3D (PENDIENTE) ---
-                    // TODO: Abrir el 'terreno' y analizar la pendiente N-S <= 15%
                     ed.WriteMessage("\n(TODO: Implementar lógica de análisis de pendiente del terreno)");
 
-
                     // --- PASO 1c: COMBINAR 1a y 1b ---
-                    // TODO: Intersectar la 'parcelaRegion' (Área Neta) con las zonas de pendiente válida
-                    // El resultado será el 'Mapa_Valido' final.
+                    ed.WriteMessage("\n(TODO: Intersectar 'parcelaRegion' con zonas de pendiente válida)");
 
-
-                    tr.Commit(); // Confirmamos los cambios (aunque aún no hemos escrito nada)
+                    tr.Commit();
                 }
                 catch (System.Exception ex)
                 {
-                    ed.WriteMessage($"\n¡Error durante el procesamiento! {ex.Message}");
-                    tr.Abort(); // Deshacer cualquier cambio si hay un error
+                    ed.WriteMessage($"\n¡Error durante el procesamiento! {ex.Message} {ex.StackTrace}");
+                    tr.Abort();
                 }
             } // La transacción se cierra aquí
 
