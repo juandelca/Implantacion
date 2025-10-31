@@ -5,15 +5,14 @@ using System.Collections.Generic;
 /* --- Dependencias de AutoCAD --- */
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.DatabaseServices; // La usaremos explícitamente
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
-using Autodesk.Civil.DatabaseServices; // La usaremos explícitamente
+using Autodesk.Civil.DatabaseServices;
 
-// NO pongas 'public' aquí
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
 
 namespace Civil3D_Phase1
@@ -49,7 +48,6 @@ namespace Civil3D_Phase1
             if (doc == null) return;
             Database db = doc.Database;
             Editor ed = doc.Editor;
-            CivilDocument cdoc = CivilApplication.ActiveDocument;
 
             ed.WriteMessage("\nIniciando Fase 1: Optimización de Layout 2D...");
 
@@ -61,11 +59,7 @@ namespace Civil3D_Phase1
             peoParcela.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true);
             
             PromptEntityResult perParcela = ed.GetEntity(peoParcela);
-            if (perParcela.Status != PromptStatus.OK)
-            {
-                ed.WriteMessage("\n*Cancelado* No se seleccionó la parcela.");
-                return;
-            }
+            if (perParcela.Status != PromptStatus.OK) { ed.WriteMessage("\n*Cancelado*"); return; }
             ObjectId parcelaId = perParcela.ObjectId;
             ed.WriteMessage("\nParcela seleccionada.");
 
@@ -92,11 +86,7 @@ namespace Civil3D_Phase1
             peoTerreno.AddAllowedClass(typeof(Autodesk.Civil.DatabaseServices.TinSurface), true);
             
             PromptEntityResult perTerreno = ed.GetEntity(peoTerreno);
-            if (perTerreno.Status != PromptStatus.OK)
-            {
-                ed.WriteMessage("\n*Cancelado* No se seleccionó el terreno.");
-                return;
-            }
+            if (perTerreno.Status != PromptStatus.OK) { ed.WriteMessage("\n*Cancelado*"); return; }
             ObjectId terrenoId = perTerreno.ObjectId;
             ed.WriteMessage("\nTerreno seleccionado.");
 
@@ -118,32 +108,47 @@ namespace Civil3D_Phase1
                         return;
                     }
 
-                    // --- INICIO DE LA SOLUCIÓN AL ERROR eInvalidInput ---
-                    // Creamos una COPIA "aplanada" de la parcela para asegurar que sea coplanar
-                    Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPlana = parcelaOriginal.Clone() as Autodesk.AutoCAD.DatabaseServices.Polyline;
-                    parcelaPlana.Normal = Vector3d.ZAxis; // Forzar Normal a (0,0,1)
-                    parcelaPlana.Elevation = 0.0;     // Forzar Elevación a 0
+                    // --- INICIO DE LA SOLUCIÓN "RECONSTRUCCIÓN 2D" ---
+                    
+                    // Función auxiliar para "aplanar" polilíneas
+                    Func<Autodesk.AutoCAD.DatabaseServices.Polyline, Autodesk.AutoCAD.DatabaseServices.Polyline> AplanarPolyline = (polyOriginal) =>
+                    {
+                        Autodesk.AutoCAD.DatabaseServices.Polyline polyPlana = new Autodesk.AutoCAD.DatabaseServices.Polyline();
+                        polyPlana.Normal = Vector3d.ZAxis;
+                        polyPlana.Elevation = 0.0;
 
+                        for (int i = 0; i < polyOriginal.NumberOfVertices; i++)
+                        {
+                            // Obtenemos solo el Point2d (X, Y) del vértice
+                            Point2d pt2d = polyOriginal.GetPoint2dAt(i);
+                            // Obtenemos el "bulge" (curvatura)
+                            double bulge = polyOriginal.GetBulgeAt(i);
+                            
+                            // Añadimos el nuevo vértice 2D a la polilínea plana
+                            polyPlana.AddVertexAt(i, pt2d, bulge, 0.0, 0.0);
+                        }
+                        polyPlana.Closed = true;
+                        return polyPlana;
+                    };
+
+                    // Aplanamos la parcela
+                    Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPlana = AplanarPolyline(parcelaOriginal);
+                    
                     Autodesk.AutoCAD.DatabaseServices.DBObjectCollection parcelaCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { parcelaPlana };
                     Autodesk.AutoCAD.DatabaseServices.Region parcelaRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(parcelaCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                     
-                    // Restamos cada afección
+                    // Aplanamos y restamos cada afección
                     foreach (ObjectId afeccionId in afeccionesIds)
                     {
-                        Autodesk.AutoCAD.DatabaseServices.DBObject afeccionObj = tr.GetObject(afeccionId, OpenMode.ForRead);
-                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionOriginal = afeccionObj as Autodesk.AutoCAD.DatabaseServices.Polyline;
+                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionOriginal = tr.GetObject(afeccionId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
                         if (afeccionOriginal == null) continue;
 
-                        // Creamos una COPIA "aplanada" de la afección
-                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionPlana = afeccionOriginal.Clone() as Autodesk.AutoCAD.DatabaseServices.Polyline;
-                        afeccionPlana.Normal = Vector3d.ZAxis; // Forzar Normal
-                        afeccionPlana.Elevation = 0.0;     // Forzar Elevación
-                        if (!afeccionPlana.Closed) afeccionPlana.Closed = true;
-
+                        // Aplanamos la afección
+                        Autodesk.AutoCAD.DatabaseServices.Polyline afeccionPlana = AplanarPolyline(afeccionOriginal);
+                        
                         Autodesk.AutoCAD.DatabaseServices.DBObjectCollection afeccionCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { afeccionPlana };
                         Autodesk.AutoCAD.DatabaseServices.Region afeccionRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(afeccionCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                         
-                        // Resta Booleana
                         parcelaRegion.BooleanOperation(Autodesk.AutoCAD.DatabaseServices.BooleanOperationType.BoolSubtract, afeccionRegion);
                     }
                     // --- FIN DE LA SOLUCIÓN ---
