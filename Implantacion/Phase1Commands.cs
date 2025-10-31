@@ -28,8 +28,9 @@ namespace Civil3D_Phase1
             if (Application.DocumentManager.MdiActiveDocument != null)
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
-                ed.WriteMessage("\n--- Plugin Fase 1 (Layout 2D) cargado con éxito. ---");
-                ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar el análisis. ---");
+                // --- CAMBIO DE VERSIÓN AQUÍ ---
+                ed.WriteMessage("\n--- Plugin Fase 1 (v3 - DEBUG) cargado. ---");
+                ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
 
@@ -91,12 +92,13 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            ed.WriteMessage("\nIniciando Fase 1: Optimización de Layout 2D...");
+            // --- CAMBIO DE VERSIÓN AQUÍ ---
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN DEBUG v3) ---");
+            ed.WriteMessage("\nEste mensaje PRUEBA que estás usando la DLL correcta.");
+            ed.WriteMessage("\nSi no ves este mensaje, la DLL es antigua.");
+
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
-            
-            // (El código de selección de Parcela, Afecciones y Terreno es idéntico)
-            // ... (Omitido por brevedad, no lo cambies) ...
             
             // --- 1a. Seleccionar la Parcela (Polilínea) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
@@ -139,7 +141,7 @@ namespace Civil3D_Phase1
                 try
                 {
                     // --- PASO DE DEPURACIÓN: CREAR CAPA ---
-                    ed.WriteMessage("\nCreando capa 'DEBUG_FLAT'...");
+                    ed.WriteMessage("\nDEBUG: Creando capa 'DEBUG_FLAT'...");
                     ObjectId debugLayerId = CreateLayer(db, "DEBUG_FLAT", Color.FromColorIndex(ColorMethod.ByAci, 1)); // Color Rojo
 
                     // Acceder al ModelSpace para dibujar
@@ -158,53 +160,57 @@ namespace Civil3D_Phase1
                     }
                     
                     // Aplanamos la parcela
+                    ed.WriteMessage("\nDEBUG: Aplanando polilínea de parcela...");
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPlana = AplanarPolyline(parcelaOriginal);
                     
                     // --- INICIO PASO DE DEPURACIÓN ---
-                    ed.WriteMessage("\nDibujando parcela aplanada en capa 'DEBUG_FLAT'...");
+                    ed.WriteMessage("\nDEBUG: Dibujando parcela aplanada en capa 'DEBUG_FLAT'...");
                     parcelaPlana.LayerId = debugLayerId;
                     btr.AppendEntity(parcelaPlana);
                     tr.AddNewlyCreatedDBObject(parcelaPlana, true);
                     // --- FIN PASO DE DEPURACIÓN ---
 
                     Autodesk.AutoCAD.DatabaseServices.DBObjectCollection parcelaCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { parcelaPlana };
+                    ed.WriteMessage("\nDEBUG: Creando región de parcela...");
                     Autodesk.AutoCAD.DatabaseServices.Region parcelaRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(parcelaCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                     
                     // Aplanamos y restamos cada afección
+                    int i = 1;
                     foreach (ObjectId afeccionId in afeccionesIds)
                     {
                         Autodesk.AutoCAD.DatabaseServices.Polyline afeccionOriginal = tr.GetObject(afeccionId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
                         if (afeccionOriginal == null) continue;
 
+                        ed.WriteMessage($"\nDEBUG: Aplanando afección {i}...");
                         Autodesk.AutoCAD.DatabaseServices.Polyline afeccionPlana = AplanarPolyline(afeccionOriginal);
                         
                         // --- INICIO PASO DE DEPURACIÓN ---
+                        ed.WriteMessage($"\nDEBUG: Dibujando afección aplanada {i}...");
                         afeccionPlana.LayerId = debugLayerId;
                         btr.AppendEntity(afeccionPlana);
                         tr.AddNewlyCreatedDBObject(afeccionPlana, true);
                         // --- FIN PASO DE DEPURACIÓN ---
 
                         Autodesk.AutoCAD.DatabaseServices.DBObjectCollection afeccionCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { afeccionPlana };
+                        ed.WriteMessage($"\nDEBUG: Creando región de afección {i}...");
                         Autodesk.AutoCAD.DatabaseServices.Region afeccionRegion = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(afeccionCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                         
+                        ed.WriteMessage($"\nDEBUG: Restando región de afección {i}...");
                         parcelaRegion.BooleanOperation(Autodesk.AutoCAD.DatabaseServices.BooleanOperationType.BoolSubtract, afeccionRegion);
+                        i++;
                     }
                     
                     ed.WriteMessage("\nÁrea Neta 2D (Región) calculada con éxito.");
 
-                    // (Aquí podemos dibujar la región resultante también para verla)
                     parcelaRegion.LayerId = debugLayerId;
                     parcelaRegion.ColorIndex = 3; // Color Verde
                     btr.AppendEntity(parcelaRegion);
                     tr.AddNewlyCreatedDBObject(parcelaRegion, true);
-                    ed.WriteMessage("\nRegión Neta dibujada en capa 'DEBUG_FLAT'.");
-
+                    ed.WriteMessage("\nDEBUG: Región Neta final dibujada en capa 'DEBUG_FLAT'.");
 
                     // --- PASO 1b: ANÁLISIS 3D (PENDIENTE) ---
                     ed.WriteMessage("\n(TODO: Implementar lógica de análisis de pendiente del terreno)");
-
-                    // --- PASO 1c: COMBINAR 1a y 1b ---
-                    ed.WriteMessage("\n(TODO: Intersectar 'parcelaRegion' con zonas de pendiente válida)");
+                    // ... (resto del código) ...
 
                     tr.Commit();
                 }
