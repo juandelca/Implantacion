@@ -15,15 +15,15 @@ jobs:
     - name: Setup .NET Framework (msbuild)
       uses: microsoft/setup-msbuild@v1
 
-    # 3. Compila el proyecto (RUTA CORREGIDA)
+    # 3. Compila el proyecto
     - name: Build project
-      # Le decimos que el .csproj está DENTRO de la carpeta 'Implantacion'
-      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=AnyCPU
+      # CAMBIO: Le decimos a msbuild que use la plataforma 'x64'
+      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=x64
 
     # 4. Sube la DLL
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Civil3D-Phase1-DLL
-        # La ruta de salida también cambia
-        path: ${{ github.workspace }}\Implantacion\bin\Release\Civil3D_Phase1.dll
+        # CAMBIO: La ruta de la DLL ahora incluye 'x64'
+        path: ${{ github.workspace }}\Implantacion\bin\x64\Release\Civil3D_Phase1.dll
