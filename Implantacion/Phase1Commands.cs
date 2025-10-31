@@ -1,3 +1,49 @@
+/* --- Dependencias de .NET --- */
+using System;
+using System.Collections.Generic;
+
+/* --- Dependencias de AutoCAD --- */
+using Autodesk.AutoCAD.Runtime;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
+
+/* --- Dependencias de Civil 3D --- */
+using Autodesk.Civil.ApplicationServices;
+using Autodesk.Civil.DatabaseServices;
+
+// Definimos un alias para nuestro proyecto para que sea fácil de llamar
+[assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
+
+namespace Civil3D_Phase1
+{
+    // -----------------------------------------------------------------
+    // CLASE DE INICIALIZACIÓN (IEntryPoint)
+    // -----------------------------------------------------------------
+    public class PluginInitializer : IExtensionApplication
+    {
+        public void Initialize()
+        {
+            if (Application.DocumentManager.MdiActiveDocument != null)
+            {
+                Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
+                ed.WriteMessage("\n--- Plugin Fase 1 (Layout 2D) cargado con éxito. ---");
+                ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar el análisis. ---");
+            }
+        }
+
+        public void Terminate()
+        {
+            // Este método se llama cuando se descarga el plugin o se cierra Civil 3D
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // CLASE DE COMANDOS
+    // -----------------------------------------------------------------
+    public class Phase1Commands
+    {
         [CommandMethod("FASE1")]
         public void RunPhase1()
         {
@@ -78,21 +124,32 @@
                     if (!parcelaPoly.Closed)
                     {
                         ed.WriteMessage("\nError: La polilínea de parcela no está cerrada. Abortando.");
+                        tr.Abort();
                         return;
                     }
 
-                    DBObjectCollection parcelaCurves = new DBObjectCollection { parcelaPoly };
-                    Region parcelaRegion = Region.CreateFromCurves(parcelaCurves)[0] as Region;
+                    DBObjectCollection parcelaCurves = new DBObjectCollection();
+                    parcelaCurves.Add(parcelaPoly);
+                    Region parcelaRegion = (Region.CreateFromCurves(parcelaCurves)[0] as Region);
                     
                     // Restamos cada afección
                     foreach (ObjectId afeccionId in afeccionesIds)
                     {
-                        Polyline afeccionPoly = tr.GetObject(afeccionId, OpenMode.ForRead) as Polyline;
+                        DBObject afeccionObj = tr.GetObject(afeccionId, OpenMode.ForRead);
+                        Polyline afeccionPoly = afeccionObj as Polyline;
                         if (afeccionPoly == null) continue; // Ignorar si no es una polilínea válida
-                        if (!afeccionPoly.Closed) afeccionPoly.Closed = true; // Forzar cierre si es necesario
+                        
+                        if (!afeccionPoly.Closed)
+                        {
+                            // Si no está cerrada, intentamos cerrarla para la operación
+                            // Nota: Esto requiere abrirla para escritura
+                            afeccionPoly.UpgradeOpen();
+                            afeccionPoly.Closed = true;
+                        }
 
-                        DBObjectCollection afeccionCurves = new DBObjectCollection { afeccionPoly };
-                        Region afeccionRegion = Region.CreateFromCurves(afeccionCurves)[0] as Region;
+                        DBObjectCollection afeccionCurves = new DBObjectCollection();
+                        afeccionCurves.Add(afeccionPoly);
+                        Region afeccionRegion = (Region.CreateFromCurves(afeccionCurves)[0] as Region);
                         
                         // Esta es la operación de resta booleana
                         parcelaRegion.BooleanOperation(BooleanOperationType.BoolSubtract, afeccionRegion);
@@ -121,4 +178,6 @@
             } // La transacción se cierra aquí
 
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (Lógica principal pendiente) ---");
-        }
+        } // Cierre del método RunPhase1()
+    } // Cierre de la clase Phase1Commands
+} // Cierre del namespace Civil3D_Phase1
