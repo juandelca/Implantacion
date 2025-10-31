@@ -7,22 +7,23 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    # 1. Descarga tu código (con la carpeta /lib incluida)
+    # 1. Descarga tu código
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 2. Configura msbuild (el compilador de .NET Framework)
+    # 2. Configura msbuild
     - name: Setup .NET Framework (msbuild)
       uses: microsoft/setup-msbuild@v1
 
-    # 3. Compila el proyecto
-    #    Ya no necesita 'nuget restore', solo compilar
+    # 3. Compila el proyecto (RUTA CORREGIDA)
     - name: Build project
-      run: msbuild ${{ github.workspace }}\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=AnyCPU
+      # Le decimos que el .csproj está DENTRO de la carpeta 'Implantacion'
+      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=AnyCPU
 
     # 4. Sube la DLL
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Civil3D-Phase1-DLL
-        path: ${{ github.workspace }}\bin\Release\Civil3D_Phase1.dll
+        # La ruta de salida también cambia
+        path: ${{ github.workspace }}\Implantacion\bin\Release\Civil3D_Phase1.dll
