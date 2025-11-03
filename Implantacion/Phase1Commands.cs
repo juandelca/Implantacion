@@ -33,7 +33,7 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             Database db = doc.Database;
 
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v26 - Cálculo Área Neta) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v27 - Retranqueo Interior Corregido) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers ---
             List<TrackerModel> trackerLibrary;
@@ -75,18 +75,12 @@ namespace Civil3D_Phase1
             double pitchEjeAEje = selectedTracker.ancho_huella_ns + pasoLibreNS;
             ed.WriteMessage($"\nPaso libre N-S: {pasoLibreNS}m. Pitch N-S Eje-a-Eje calculado: {pitchEjeAEje}m");
 
-            // --- NUEVO Input 2c. Pedir Retranqueo (Setback) ---
+            // 2c. Pedir Retranqueo (Setback)
+            // ... (Lógica de retranqueo sin cambios) ...
             PromptDoubleOptions pdoSetback = new PromptDoubleOptions("\nIntroduzca el retranqueo (setback) de la parcela en metros:");
-            pdoSetback.AllowNegative = false;
-            pdoSetback.AllowZero = true;
-            pdoSetback.DefaultValue = 5.0; // Setback de 5m por defecto
-
+            pdoSetback.AllowNegative = false; pdoSetback.AllowZero = true; pdoSetback.DefaultValue = 5.0;
             PromptDoubleResult prSetback = ed.GetDouble(pdoSetback);
-            if (prSetback.Status != PromptStatus.OK)
-            {
-                ed.WriteMessage("\n*Cancelado por el usuario.*");
-                return;
-            }
+            if (prSetback.Status != PromptStatus.OK) { return; }
             double setback = prSetback.Value;
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
@@ -110,8 +104,7 @@ namespace Civil3D_Phase1
             // --- PASO 4: Cálculo de Área Neta ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
             
-            // --- LÓGICA REEMPLAZADA ---
-            // Llama a la nueva función para calcular el offset (retranqueo)
+            // Llamamos a la función de offset (ahora corregida)
             ObjectId netAreaId = GetNetArea(db, parcelId, setback);
             
             if (netAreaId == ObjectId.Null)
@@ -119,8 +112,6 @@ namespace Civil3D_Phase1
                 ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (el retranqueo puede ser demasiado grande o la polilínea no es válida). Cancelando.");
                 return;
             }
-            
-            // (En el futuro, aquí también restaremos las 'affectionIds' de 'netAreaId')
             
             ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada con éxito en la capa 'AREA_NETA'!");
 
@@ -130,7 +121,7 @@ namespace Civil3D_Phase1
 
 
             // --- PASO 6: Dibujado (Implementación de prueba) ---
-            DrawTestTrackers(db, selectedTracker); // Mantenemos esto por ahora
+            DrawTestTrackers(db, selectedTracker);
             ed.WriteMessage("\n¡Trackers de prueba dibujados con éxito!");
 
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
@@ -209,82 +200,110 @@ namespace Civil3D_Phase1
             }
         }
 
-        // --- NUEVA FUNCIÓN AUXILIAR 5 ---
+        // --- FUNCIÓN 'GetNetArea' (v2 - CORREGIDA) ---
         /// <summary>
-        /// Aplica un offset (retranqueo) a la polilínea de la parcela.
+        /// Aplica un offset (retranqueo) INTERIOR a la polilínea de la parcela.
         /// Dibuja la polilínea resultante en la capa "AREA_NETA".
         /// </summary>
-        /// <returns>El ObjectId de la nueva polilínea (Área Neta) o ObjectId.Null si falla.</returns>
         private static ObjectId GetNetArea(Database db, ObjectId parcelId, double setback)
         {
-            // El setback 0 significa que no hay offset, el área neta es la parcela misma.
-            if (setback == 0)
-            {
-                return parcelId;
-            }
+            if (setback == 0) return parcelId;
 
-            // Usamos una transacción para leer la polilínea y crear la nueva
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                // 1. Abrir la polilínea de la parcela
-                Entity ent = tr.GetObject(parcelId, OpenMode.ForRead) as Entity;
-                if (!(ent is Polyline) && !(ent is Polyline2d) && !(ent is Polyline3d))
+                // 1. Abrir la polilínea de la parcela como Curva
+                Curve curve = tr.GetObject(parcelId, OpenMode.ForRead) as Curve;
+                if (curve == null)
                 {
-                    return ObjectId.Null; // No es una polilínea
+                    return ObjectId.Null; // No es una entidad tipo Curva
                 }
+                
+                // Guardamos el área original para comparar
+                double originalArea = curve.Area;
 
                 // 2. Crear la capa de Área Neta
                 string layerName = "AREA_NETA";
                 Color color = Color.FromRgb(255, 0, 255); // Magenta
                 CreateLayer(db, tr, layerName, color);
 
-                // 3. Aplicar el Offset
-                // Usamos un valor negativo para hacer el offset hacia *adentro*
+                // 3. Aplicar Offset (INTENTO 1: Negativo)
                 DBObjectCollection offsetCurves = null;
                 try
                 {
-                    // Debemos usar la interfaz 'Curve' para acceder a GetOffsetCurves
-                    Curve curve = ent as Curve; 
-                    if (curve == null) return ObjectId.Null;
-
-                    // El método GetOffsetCurves devuelve una colección de DBObject
                     offsetCurves = curve.GetOffsetCurves(-setback);
                 }
-                catch (System.Exception ex)
+                catch (System.Exception) 
                 {
-                    Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError durante el Offset: {ex.Message}");
-                    return ObjectId.Null; // Falla si el setback es muy grande, p.ej.
+                    // Error común si el setback es muy grande
+                    return ObjectId.Null; 
                 }
 
-
-                // 4. Procesar el resultado del Offset
+                // 4. Comprobar el resultado
                 if (offsetCurves != null && offsetCurves.Count > 0)
                 {
-                    // El offset puede generar múltiples polilíneas, pero para una parcela simple, será 1.
-                    // Nos quedamos con la primera entidad.
-                    Entity netAreaEntity = offsetCurves[0] as Entity; 
-                    
-                    if (netAreaEntity != null)
+                    Curve offsetCurve = offsetCurves[0] as Curve;
+                    if (offsetCurve != null)
                     {
-                        // 5. Añadir la nueva entidad al ModelSpace y a la transacción
-                        BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                        BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                        netAreaEntity.Layer = layerName; // Asignar la capa magenta
-                        btr.AppendEntity(netAreaEntity);
-                        tr.AddNewlyCreatedDBObject(netAreaEntity, true);
-
-                        // 6. Confirmar la transacción
-                        tr.Commit();
-                        
-                        // Devolver el ID de la nueva polilínea creada
-                        return netAreaEntity.ObjectId;
+                        // --- LÓGICA DE CORRECCIÓN ---
+                        // Comprobar si la nueva área es MÁS PEQUEÑA
+                        if (offsetCurve.Area < originalArea)
+                        {
+                            // ÉXITO: El offset negativo fue hacia adentro
+                            return AddNetAreaToModelSpace(db, tr, offsetCurve, layerName);
+                        }
                     }
                 }
                 
-                // Si el offset no devolvió nada (p.ej. setback demasiado grande)
+                // 5. Si el offset negativo falló (fue hacia afuera), probamos con positivo
+                try
+                {
+                    offsetCurves = curve.GetOffsetCurves(setback); // INTENTO 2: Positivo
+                }
+                catch (System.Exception)
+                {
+                    return ObjectId.Null; // Falló en ambos sentidos
+                }
+                
+                if (offsetCurves != null && offsetCurves.Count > 0)
+                {
+                     Curve offsetCurve = offsetCurves[0] as Curve;
+                     if (offsetCurve != null)
+                     {
+                        // Comprobar si la nueva área es MÁS PEQUEÑA
+                        if (offsetCurve.Area < originalArea)
+                        {
+                            // ÉXITO: El offset positivo fue hacia adentro
+                            return AddNetAreaToModelSpace(db, tr, offsetCurve, layerName);
+                        }
+                     }
+                }
+
+                // Si llegamos aquí, ninguno de los offsets funcionó (p.ej. setback > parcela)
                 return ObjectId.Null;
             }
+        }
+
+        // --- NUEVA FUNCIÓN AUXILIAR 6 (Refactorizada) ---
+        /// <summary>
+        /// Añade una entidad (Curva) al ModelSpace, le asigna capa y confirma la transacción.
+        /// </summary>
+        private static ObjectId AddNetAreaToModelSpace(Database db, Transaction tr, Curve netAreaCurve, string layerName)
+        {
+            // 1. Añadir la nueva entidad al ModelSpace
+            BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+            // 2. Asignar capa y añadir
+            Entity netAreaEntity = netAreaCurve as Entity;
+            netAreaEntity.Layer = layerName;
+            btr.AppendEntity(netAreaEntity);
+            tr.AddNewlyCreatedDBObject(netAreaEntity, true);
+
+            // 3. Confirmar la transacción
+            tr.Commit();
+            
+            // Devolver el ID de la nueva polilínea creada
+            return netAreaEntity.ObjectId;
         }
     }
 }
