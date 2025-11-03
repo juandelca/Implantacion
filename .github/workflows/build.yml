@@ -7,29 +7,37 @@ jobs:
     runs-on: windows-latest
 
     steps:
+    # ... (pasos 1-4 sin cambios) ...
+
+    # 1. Descarga tu código
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # 2. Configura msbuild
     - name: Setup .NET Framework (msbuild)
       uses: microsoft/setup-msbuild@v1
       
+    # 3. Configura NuGet
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
 
-    # --- RUTA CORREGIDA ---
+    # 4. Restaura el paquete (Newtonsoft.Json)
     - name: Restore NuGet packages
       run: nuget restore ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj
 
+    # 5. Compila el proyecto
     # --- RUTA CORREGIDA ---
     - name: Build project
-      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=AnyCPU
+      run: msbuild ${{ github.workspace }}\Implantacion\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=x64 # <-- CAMBIO DE AnyCPU a x64
 
+    # 6. Comprime la carpeta de salida
     # --- RUTA CORREGIDA ---
     - name: Zip Release folder
       run: |
         Compress-Archive -Path ${{ github.workspace }}\Implantacion\bin\Release\* -DestinationPath ${{ github.workspace }}\Release.zip
       shell: powershell
 
+    # 7. Sube el artefacto .zip
     - name: Upload Full Release Artifact
       uses: actions/upload-artifact@v4
       with:
