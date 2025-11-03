@@ -31,7 +31,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v7 - Completo) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v8 - Corrección Final) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -83,15 +83,12 @@ namespace Civil3D_Phase1
             polyPlana.Normal = Vector3d.ZAxis;
             polyPlana.Elevation = 0.0;
 
-            // Iteramos por los IDs de los vértices de la Polyline3d
             foreach (ObjectId vertexId in p3d)
             {
-                // Abrimos cada vértice
                 Autodesk.AutoCAD.DatabaseServices.DBObject vtxObj = tr.GetObject(vertexId, OpenMode.ForRead);
                 if (vtxObj is PolylineVertex3d)
                 {
                     PolylineVertex3d vtx = vtxObj as PolylineVertex3d;
-                    // Extraemos solo las coordenadas X, Y
                     Point2d pt2d = new Point2d(vtx.Position.X, vtx.Position.Y);
                     polyPlana.AddVertexAt(polyPlana.NumberOfVertices, pt2d, 0, 0, 0);
                 }
@@ -111,10 +108,9 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             CivilDocument cdoc = CivilApplication.ActiveDocument; 
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v7 - Completo) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v8 - Corrección Final) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
-            // (Idéntico, no hay cambios aquí)
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
             peoParcela.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea. Inténtelo de nuevo.");
             peoParcela.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true);
@@ -165,7 +161,6 @@ namespace Civil3D_Phase1
 
                     // --- PASO 1a: ANÁLISIS 2D (PARCELA - AFECCIONES) ---
                     ed.WriteMessage("\nIniciando Paso 1a: Cálculo del Área Neta...");
-                    // (Esta sección no ha cambiado)
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaOriginal = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
                     if (parcelaOriginal == null || !parcelaOriginal.Closed)
                     {
@@ -230,8 +225,7 @@ namespace Civil3D_Phase1
                     ObjectId polyIdRange1 = polyIds[0];
                     Autodesk.AutoCAD.DatabaseServices.DBObject polyObj = tr.GetObject(polyIdRange1, OpenMode.ForRead);
                     
-                    // --- LÓGICA CORREGIDA (de v6) ---
-                    // Esta es la lógica que faltaba en tu código
+                    // --- ESTA ES LA LÓGICA CORREGIDA QUE TE FALTABA ---
                     Autodesk.AutoCAD.DatabaseServices.DBObjectCollection polyCollection = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection();
                     if (polyObj is Polyline3d)
                     {
@@ -241,7 +235,7 @@ namespace Civil3D_Phase1
                     {
                         polyCollection = polyObj as Autodesk.AutoCAD.DatabaseServices.DBObjectCollection;
                     }
-                    // --- FIN DE LÓGICA CORREGIDA ---
+                    // --- FIN DE LA LÓGICA CORREGIDA ---
 
                     ed.WriteMessage($"\nDEBUG: Encontradas {polyCollection.Count} zonas de pendiente válida (0-15%).");
                     foreach (Autodesk.AutoCAD.DatabaseServices.DBObject obj in polyCollection)
@@ -257,7 +251,7 @@ namespace Civil3D_Phase1
 
                         try
                         {
-                            Region regionValida = Region.CreateFromCurves(new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { p2d })[0] as Region;
+                            Region regionValida = Region.CreateFromCurves(new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { p2d })[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                             slopeRegionOK.BooleanOperation(BooleanOperationType.BoolUnite, regionValida);
                         }
                         catch (System.Exception ex)
