@@ -14,7 +14,7 @@ using Autodesk.AutoCAD.Colors; // Necesario para los colores de capa
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
-using Autodesk.Civil.DatabaseServices.Styles; // <-- ¡La línea clave!
+// Ya no necesitamos 'Autodesk.Civil.DatabaseServices.Styles'
 
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
 
@@ -49,7 +49,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v18 - Corrección Total) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v19 - Sin Análisis Pendiente) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -101,26 +101,6 @@ namespace Civil3D_Phase1
             return polyPlana;
         }
 
-        // --- FUNCIÓN AUXILIAR PARA APLANAR Polyline3d ---
-        private Polyline AplanarPolyline3d(Polyline3d p3d, Transaction tr)
-        {
-            Polyline polyPlana = new Polyline();
-            polyPlana.Normal = Vector3d.ZAxis;
-            polyPlana.Elevation = 0.0;
-            foreach (ObjectId vertexId in p3d)
-            {
-                Autodesk.AutoCAD.DatabaseServices.DBObject vtxObj = tr.GetObject(vertexId, OpenMode.ForRead);
-                if (vtxObj is PolylineVertex3d)
-                {
-                    PolylineVertex3d vtx = vtxObj as PolylineVertex3d;
-                    Point2d pt2d = new Point2d(vtx.Position.X, vtx.Position.Y);
-                    polyPlana.AddVertexAt(polyPlana.NumberOfVertices, pt2d, 0, 0, 0);
-                }
-            }
-            polyPlana.Closed = p3d.Closed;
-            return polyPlana;
-        }
-
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [CommandMethod("FASE1")]
@@ -131,9 +111,8 @@ namespace Civil3D_Phase1
             if (doc == null) return;
             Database db = doc.Database;
             Editor ed = doc.Editor;
-            CivilDocument cdoc = CivilApplication.ActiveDocument;
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v18 - Corrección Total) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v19 - Sin Análisis Pendiente) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
@@ -158,14 +137,8 @@ namespace Civil3D_Phase1
             }
             else { ed.WriteMessage("\nNo se seleccionaron afecciones."); }
 
-            PromptEntityOptions peoTerreno = new PromptEntityOptions("\nSeleccione la Superficie (Terreno Original): ");
-            peoTerreno.SetRejectMessage("\nEl objeto seleccionado no es una Superficie TIN.");
-            peoTerreno.AddAllowedClass(typeof(Autodesk.Civil.DatabaseServices.TinSurface), true);
-            PromptEntityResult perTerreno = ed.GetEntity(peoTerreno);
-            if (perTerreno.Status != PromptStatus.OK) { ed.WriteMessage("\n*Cancelado*"); return; }
-            ObjectId terrenoId = perTerreno.ObjectId;
-            ed.WriteMessage("\nTerreno seleccionado.");
-
+            // --- SELECCIÓN DE TERRENO OMITIDA ---
+            ed.WriteMessage("\n(Omitiendo selección de Terreno. El análisis de pendiente está desactivado en esta versión.)");
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
             
             // --- Declaraciones fuera de la transacción ---
@@ -227,53 +200,8 @@ namespace Civil3D_Phase1
                     
                     ed.WriteMessage("\nÁrea Neta 2D (Región) calculada con éxito.");
 
-                    // --- PASO 1b: ANÁLISIS 3D (PENDIENTE N-S <= 15%) ---
-                    ed.WriteMessage("\nIniciando Paso 1b: Análisis de Pendiente del Terreno...");
-                    Region slopeRegionOK = new Region(); 
-                    TinSurface terreno = tr.GetObject(terrenoId, OpenMode.ForRead) as TinSurface;
-                    SurfaceAnalysisSlopeRange[] slopeRanges = new SurfaceAnalysisSlopeRange[]
-                    {
-                        new SurfaceAnalysisSlopeRange(0.0, 15.0),
-                        new SurfaceAnalysisSlopeRange(15.0, 9999.0)
-                    };
-                    ObjectIdCollection polyIds = terreno.Analysis.GetSlopeData(slopeRanges, SurfaceAnalysisDirection.North);
-                    ObjectId polyIdRange1 = polyIds[0];
-                    Autodesk.AutoCAD.DatabaseServices.DBObject polyObj = tr.GetObject(polyIdRange1, OpenMode.ForRead);
-                    
-                    // --- ESTA ES LA LÓGICA CORREGIDA (de v12) ---
-                    Autodesk.AutoCAD.DatabaseServices.DBObjectCollection polyCollection = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection();
-                    if (polyObj is Polyline3d) { polyCollection.Add(polyObj); }
-                    else if (polyObj is Autodesk.AutoCAD.DatabaseServices.DBObjectCollection)
-                    { polyCollection = polyObj as Autodesk.AutoCAD.DatabaseServices.DBObjectCollection; }
-                    // --- FIN LÓGICA CORREGIDA ---
-
-                    ed.WriteMessage($"\nDEBUG: Encontradas {polyCollection.Count} zonas de pendiente válida (0-15%).");
-                    foreach (Autodesk.AutoCAD.DatabaseServices.DBObject obj in polyCollection)
-                    {
-                        Polyline3d p3d = obj as Polyline3d;
-                        if (p3d == null) continue;
-                        Polyline p2d = AplanarPolyline3d(p3d, tr); 
-                        p2d.LayerId = debugLayerId;
-                        p2d.ColorIndex = 2; // Amarillo
-                        btr.AppendEntity(p2d);
-                        tr.AddNewlyCreatedDBObject(p2d, true);
-
-                        try
-                        {
-                            Region regionValida = Region.CreateFromCurves(new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { p2d })[0] as Region;
-                            slopeRegionOK.BooleanOperation(BooleanOperationType.BoolUnite, regionValida);
-                        }
-                        catch (System.Exception ex)
-                        {
-                             ed.WriteMessage($"\n¡AVISO! Una zona de pendiente tiene geometría inválida y será IGNORADA. {ex.Message}");
-                        }
-                    }
-                    ed.WriteMessage("\nZonas de pendiente válida (<15% N-S) procesadas.");
-                    
-                    // --- PASO 1c: INTERSECCIÓN 2D y 3D ---
-                    ed.WriteMessage("\nIniciando Paso 1c: Creando Mapa de Validez (Área Neta Y Pendiente Válida)...");
-                    mapaValido.BooleanOperation(BooleanOperationType.BoolIntersect, slopeRegionOK);
-                    ed.WriteMessage("\n¡Mapa de Validez final calculado con éxito!");
+                    // --- PASO 1b y 1c ELIMINADOS ---
+                    ed.WriteMessage("\n¡Mapa de Validez (Solo 2D) calculado con éxito!");
                     
                     mapaValido.LayerId = debugLayerId;
                     mapaValido.ColorIndex = 3; // Color Verde
@@ -317,7 +245,7 @@ namespace Civil3D_Phase1
                             new Point3d(currentX, maxPt.Y + 100.0, 0)
                         );
 
-                        // --- ESTA ES LA LÓGICA CORREGIDA (de v17) ---
+                        // --- Lógica de Intersección Corregida (de v17) ---
                         Point3dCollection intersectionPoints = new Point3dCollection();
 
                         mapaValido.IntersectWith(ejeVertical, Intersect.OnBothOperands, intersectionPoints, IntPtr.Zero, IntPtr.Zero);
@@ -330,7 +258,7 @@ namespace Civil3D_Phase1
                                 puntosOrdenados.Add(pt);
                             }
                             puntosOrdenados = puntosOrdenados.OrderBy(p => p.Y).ToList();
-                            // --- FIN LÓGICA CORREGIDA ---
+                            // --- Fin Lógica Corregida ---
 
                             for (int s = 0; s < puntosOrdenados.Count; s += 2)
                             {
