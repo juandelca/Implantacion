@@ -66,12 +66,7 @@
       <Private>False</Private>
     </Reference>
     
-    <Reference Include="AcBrMgd">
-      <HintPath>lib\AcBrMgd.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-
-  </ItemGroup>
+    </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json">
