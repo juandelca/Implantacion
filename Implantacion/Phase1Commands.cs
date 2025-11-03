@@ -8,6 +8,7 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
+using Autodesk.AutoCAD.BoundaryRepresentation; // <--- NUEVO IMPORT (para Brep)
 
 namespace Civil3D_Phase1
 {
@@ -46,7 +47,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v32 - Corrección final .Contains) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v33 - Corrección Brep.IsPointInside) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers ---
             List<TrackerModel> trackerLibrary;
@@ -63,7 +64,7 @@ namespace Civil3D_Phase1
             catch (System.Exception) { /* ... error ... */ return; }
 
 
-            // --- PASO 2: Solicitar Inputs de Layout ---
+            // --- PASO 2: Solicitar Inputs de Layout (Sin cambios) ---
             
             // 2a. Seleccionar Tracker
             PromptKeywordOptions pkoTracker = new PromptKeywordOptions("\nSeleccione el id_tracker de la biblioteca:");
@@ -93,7 +94,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría ---
+            // --- PASO 3: Selección de Geometría (Sin cambios) ---
             
             // 3a. Seleccionar Parcela
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela:");
@@ -107,7 +108,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
 
 
-            // --- PASO 4: Cálculo de Área Neta y Mapa de Validez ---
+            // --- PASO 4: Cálculo de Área Neta y Mapa de Validez (Sin cambios) ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
             
             // 4a. Calcular Retranqueo (Setback)
@@ -134,7 +135,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (REGIONES) calculado con éxito!");
 
 
-            // --- PASO 5: Bucle de Optimización ---
+            // --- PASO 5: Bucle de Optimización (Sin cambios) ---
             ed.WriteMessage("\n--- Iniciando Paso 5: Bucle de Optimización (100 iteraciones) ---");
             LayoutResult winningLayout = RunOptimizationLoop_v30(db, finalValidAreaIds, selectedTracker, pitchEjeAEje);
             
@@ -158,7 +159,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"Trackers Cortos ({selectedTracker.longitud_corto}m): {winningLayout.ShortTrackers}");
 
 
-            // --- PASO 6: Dibujado Final ---
+            // --- PASO 6: Dibujado Final (Sin cambios) ---
             ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout Ganador ---");
             DrawFinalLayout(db, winningLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito en capas 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'!");
@@ -430,7 +431,7 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- FUNCIÓN 'IsPointInsideRegions' (v32 - CORREGIDA) ---
+        // --- FUNCIÓN 'IsPointInsideRegions' (v33 - CORREGIDA) ---
         /// <summary>
         /// Comprueba si un punto está dentro de CUALQUIERA de las REGIONES.
         /// </summary>
@@ -443,13 +444,19 @@ namespace Civil3D_Phase1
                     Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
                     if (region != null)
                     {
-                        // --- CORRECCIÓN v32: De .PointInRegion a .Contains ---
-                        // Este era el método correcto de la v30, que ahora
-                        // debería funcionar gracias a la corrección de plataforma x64.
-                        if (region.Contains(testPoint))
+                        // --- CORRECCIÓN v33: Usar Brep.IsPointInside ---
+                        // 1. Crear un objeto Brep a partir de la Región
+                        using (Brep brep = new Brep(region))
                         {
-                            tr.Abort(); // Encontrado, no necesitamos más
-                            return true;
+                            if (brep != null)
+                            {
+                                // 2. Comprobar si el punto está dentro
+                                if (brep.IsPointInside(testPoint))
+                                {
+                                    tr.Abort(); // Encontrado
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }
@@ -457,6 +464,7 @@ namespace Civil3D_Phase1
                 return false;
             }
         }
+
 
         // --- CreateTrackerPolyline (sin cambios) ---
         private static Polyline CreateTrackerPolyline(Point3d center, double length, double width, string layer)
