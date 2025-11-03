@@ -13,7 +13,8 @@ using Autodesk.AutoCAD.Colors; // Necesario para los colores de capa
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
-using Autodesk.Civil.DatabaseServices.Styles; // <-- ESTA LÍNEA ES NUEVA Y ARREGLA LOS ERRORES 'CS0246' y 'CS0103'
+//  ↓↓↓ ¡¡ESTA LÍNEA ES LA QUE FALTA EN TU CÓDIGO ACTUAL!! ↓↓↓
+using Autodesk.Civil.DatabaseServices.Styles; 
 
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
 
@@ -29,7 +30,8 @@ namespace Civil3D_Phase1
             if (Application.DocumentManager.MdiActiveDocument != null)
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
-                ed.WriteMessage("\n--- Plugin Fase 1 (v6 - Corrección Poly3d) cargado. ---");
+                // --- CAMBIO DE VERSIÓN AQUÍ ---
+                ed.WriteMessage("\n--- Plugin Fase 1 (v7 - Completo) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -74,8 +76,7 @@ namespace Civil3D_Phase1
             return polyPlana;
         }
 
-        // --- NUEVA FUNCIÓN AUXILIAR PARA APLANAR Polyline3d (para análisis de pendiente) ---
-        // Esto arregla el error 'CS1061'
+        // --- FUNCIÓN AUXILIAR PARA APLANAR Polyline3d (para análisis de pendiente) ---
         private Polyline AplanarPolyline3d(Polyline3d p3d, Transaction tr)
         {
             Polyline polyPlana = new Polyline();
@@ -110,10 +111,10 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             CivilDocument cdoc = CivilApplication.ActiveDocument; 
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v6 - Corrección Poly3d) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v7 - Completo) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
-            // (El código de selección es idéntico al anterior)
+            // (Idéntico, no hay cambios aquí)
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
             peoParcela.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea. Inténtelo de nuevo.");
             peoParcela.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true);
@@ -164,6 +165,7 @@ namespace Civil3D_Phase1
 
                     // --- PASO 1a: ANÁLISIS 2D (PARCELA - AFECCIONES) ---
                     ed.WriteMessage("\nIniciando Paso 1a: Cálculo del Área Neta...");
+                    // (Esta sección no ha cambiado)
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaOriginal = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
                     if (parcelaOriginal == null || !parcelaOriginal.Closed)
                     {
@@ -217,7 +219,6 @@ namespace Civil3D_Phase1
                     ed.WriteMessage("\nIniciando Paso 1b: Análisis de Pendiente del Terreno...");
                     TinSurface terreno = tr.GetObject(terrenoId, OpenMode.ForRead) as TinSurface;
                     
-                    // Clases con namespace completo para evitar errores
                     SurfaceAnalysisSlopeRange[] slopeRanges = new SurfaceAnalysisSlopeRange[]
                     {
                         new SurfaceAnalysisSlopeRange(0.0, 15.0),
@@ -227,12 +228,11 @@ namespace Civil3D_Phase1
                     ObjectIdCollection polyIds = terreno.Analysis.GetSlopeData(slopeRanges, SurfaceAnalysisDirection.North);
 
                     ObjectId polyIdRange1 = polyIds[0];
-                    // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.DBObject'
                     Autodesk.AutoCAD.DatabaseServices.DBObject polyObj = tr.GetObject(polyIdRange1, OpenMode.ForRead);
                     
-                    // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.DBObjectCollection'
+                    // --- LÓGICA CORREGIDA (de v6) ---
+                    // Esta es la lógica que faltaba en tu código
                     Autodesk.AutoCAD.DatabaseServices.DBObjectCollection polyCollection = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection();
-
                     if (polyObj is Polyline3d)
                     {
                         polyCollection.Add(polyObj);
@@ -241,6 +241,7 @@ namespace Civil3D_Phase1
                     {
                         polyCollection = polyObj as Autodesk.AutoCAD.DatabaseServices.DBObjectCollection;
                     }
+                    // --- FIN DE LÓGICA CORREGIDA ---
 
                     ed.WriteMessage($"\nDEBUG: Encontradas {polyCollection.Count} zonas de pendiente válida (0-15%).");
                     foreach (Autodesk.AutoCAD.DatabaseServices.DBObject obj in polyCollection)
@@ -248,14 +249,12 @@ namespace Civil3D_Phase1
                         Polyline3d p3d = obj as Polyline3d;
                         if (p3d == null) continue;
                         
-                        // CORRECCIÓN ERROR 'ToPolyline': Usamos la nueva función auxiliar
                         Polyline p2d = AplanarPolyline3d(p3d, tr); 
                         p2d.LayerId = debugLayerId;
                         p2d.ColorIndex = 2; // Amarillo
                         btr.AppendEntity(p2d);
                         tr.AddNewlyCreatedDBObject(p2d, true);
 
-                        // Envolvemos en try/catch por si la polilínea del terreno también es inválida
                         try
                         {
                             Region regionValida = Region.CreateFromCurves(new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { p2d })[0] as Region;
