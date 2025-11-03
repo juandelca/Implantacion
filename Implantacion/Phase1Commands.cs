@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
+using System.Linq; // <--- NUEVO para listas
 
 namespace Civil3D_Phase1
 {
@@ -33,29 +34,26 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             Database db = doc.Database;
 
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v27 - Retranqueo Interior Corregido) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v28 - Resta de Afecciones) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers ---
             List<TrackerModel> trackerLibrary;
             string dllPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
             string dllDirectory = Path.GetDirectoryName(dllPath);
             string jsonPath = Path.Combine(dllDirectory, "trackers.json");
-
             try
             {
-                // ... (Lógica de carga de JSON sin cambios) ...
                 string jsonContent = File.ReadAllText(jsonPath);
                 trackerLibrary = JsonConvert.DeserializeObject<List<TrackerModel>>(jsonContent);
                 if (trackerLibrary == null || trackerLibrary.Count == 0) { /* ... error ... */ return; }
                 ed.WriteMessage($"\nBiblioteca 'trackers.json' cargada. {trackerLibrary.Count} modelos encontrados.");
             }
-            catch (System.Exception ex) { /* ... error ... */ return; }
+            catch (System.Exception) { /* ... error ... */ return; }
 
 
             // --- PASO 2: Solicitar Inputs de Layout ---
             
             // 2a. Seleccionar Tracker
-            // ... (Lógica de selección de tracker sin cambios) ...
             PromptKeywordOptions pkoTracker = new PromptKeywordOptions("\nSeleccione el id_tracker de la biblioteca:");
             foreach (var tracker in trackerLibrary) { pkoTracker.Keywords.Add(tracker.id_tracker); }
             pkoTracker.Keywords.Default = trackerLibrary[0].id_tracker;
@@ -66,7 +64,6 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nTracker '{selectedTracker.id_tracker}' seleccionado. (Ancho N-S: {selectedTracker.ancho_huella_ns}m)");
 
             // 2b. Pedir Paso Libre N-S
-            // ... (Lógica de paso N-S sin cambios) ...
             PromptDoubleOptions pdoPaso = new PromptDoubleOptions("\nIntroduzca el paso libre N-S (distancia fin-a-inicio) en metros:");
             pdoPaso.AllowNegative = false; pdoPaso.AllowZero = false; pdoPaso.DefaultValue = 3.0;
             PromptDoubleResult prPaso = ed.GetDouble(pdoPaso);
@@ -76,7 +73,6 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nPaso libre N-S: {pasoLibreNS}m. Pitch N-S Eje-a-Eje calculado: {pitchEjeAEje}m");
 
             // 2c. Pedir Retranqueo (Setback)
-            // ... (Lógica de retranqueo sin cambios) ...
             PromptDoubleOptions pdoSetback = new PromptDoubleOptions("\nIntroduzca el retranqueo (setback) de la parcela en metros:");
             pdoSetback.AllowNegative = false; pdoSetback.AllowZero = true; pdoSetback.DefaultValue = 5.0;
             PromptDoubleResult prSetback = ed.GetDouble(pdoSetback);
@@ -88,35 +84,53 @@ namespace Civil3D_Phase1
             // --- PASO 3: Selección de Geometría ---
             
             // 3a. Seleccionar Parcela
-            // ... (Lógica de selección de parcela sin cambios) ...
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela:");
             if (parcelId == ObjectId.Null) { return; }
             ed.WriteMessage("\nParcela seleccionada.");
 
             // 3b. Seleccionar Afecciones
-            // ... (Lógica de selección de afecciones sin cambios) ...
             ObjectIdCollection affectionIds = SelectMultiplePolylines(ed, "\nSeleccione las Polilíneas de Afecciones (o pulse Intro para ninguna):");
             ed.WriteMessage($"\n{affectionIds.Count} afecciones seleccionadas.");
 
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
 
 
-            // --- PASO 4: Cálculo de Área Neta ---
+            // --- PASO 4: Cálculo de Área Neta y Mapa de Validez ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
             
-            // Llamamos a la función de offset (ahora corregida)
+            // 4a. Calcular Retranqueo (Setback)
             ObjectId netAreaId = GetNetArea(db, parcelId, setback);
-            
             if (netAreaId == ObjectId.Null)
             {
-                ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (el retranqueo puede ser demasiado grande o la polilínea no es válida). Cancelando.");
+                ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo). Cancelando.");
                 return;
             }
+            ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada en 'AREA_NETA'!");
+
+            // 4b. Restar Afecciones
+            ObjectIdCollection finalValidAreaIds = new ObjectIdCollection();
+            if (affectionIds.Count > 0)
+            {
+                ed.WriteMessage("\nRestando afecciones del Área Neta...");
+                finalValidAreaIds = SubtractAffections(db, netAreaId, affectionIds);
+                if (finalValidAreaIds.Count == 0)
+                {
+                    ed.WriteMessage("\nERROR: La resta de afecciones falló o resultó en un área vacía.");
+                    return;
+                }
+                ed.WriteMessage($"\n¡Afecciones restadas con éxito! Resultado dibujado en 'AREA_VALIDA_FINAL'.");
+            }
+            else
+            {
+                // Si no hay afecciones, el área neta ES el área final.
+                finalValidAreaIds.Add(netAreaId);
+            }
             
-            ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada con éxito en la capa 'AREA_NETA'!");
+            ed.WriteMessage("\n¡Mapa de Validez (Solo 2D) calculado con éxito!");
 
 
             // --- PASO 5: Bucle de Optimización (Lógica pendiente) ---
+            // (El siguiente paso será usar 'finalValidAreaIds' para la optimización)
             ed.WriteMessage("\n(Bucle de Optimización pendiente...)");
 
 
@@ -200,110 +214,130 @@ namespace Civil3D_Phase1
             }
         }
 
-        // --- FUNCIÓN 'GetNetArea' (v2 - CORREGIDA) ---
-        /// <summary>
-        /// Aplica un offset (retranqueo) INTERIOR a la polilínea de la parcela.
-        /// Dibuja la polilínea resultante en la capa "AREA_NETA".
-        /// </summary>
+        // --- Función Auxiliar 5 ('GetNetArea', sin cambios) ---
         private static ObjectId GetNetArea(Database db, ObjectId parcelId, double setback)
         {
+            // ... (Esta función no cambia) ...
             if (setback == 0) return parcelId;
-
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                // 1. Abrir la polilínea de la parcela como Curva
                 Curve curve = tr.GetObject(parcelId, OpenMode.ForRead) as Curve;
-                if (curve == null)
-                {
-                    return ObjectId.Null; // No es una entidad tipo Curva
-                }
-                
-                // Guardamos el área original para comparar
+                if (curve == null) { return ObjectId.Null; }
                 double originalArea = curve.Area;
-
-                // 2. Crear la capa de Área Neta
                 string layerName = "AREA_NETA";
                 Color color = Color.FromRgb(255, 0, 255); // Magenta
                 CreateLayer(db, tr, layerName, color);
-
-                // 3. Aplicar Offset (INTENTO 1: Negativo)
                 DBObjectCollection offsetCurves = null;
-                try
-                {
-                    offsetCurves = curve.GetOffsetCurves(-setback);
-                }
-                catch (System.Exception) 
-                {
-                    // Error común si el setback es muy grande
-                    return ObjectId.Null; 
-                }
-
-                // 4. Comprobar el resultado
+                try { offsetCurves = curve.GetOffsetCurves(-setback); }
+                catch (System.Exception) { return ObjectId.Null; }
                 if (offsetCurves != null && offsetCurves.Count > 0)
                 {
                     Curve offsetCurve = offsetCurves[0] as Curve;
-                    if (offsetCurve != null)
+                    if (offsetCurve != null && offsetCurve.Area < originalArea)
                     {
-                        // --- LÓGICA DE CORRECCIÓN ---
-                        // Comprobar si la nueva área es MÁS PEQUEÑA
-                        if (offsetCurve.Area < originalArea)
-                        {
-                            // ÉXITO: El offset negativo fue hacia adentro
-                            return AddNetAreaToModelSpace(db, tr, offsetCurve, layerName);
-                        }
+                        return AddNetAreaToModelSpace(db, tr, offsetCurve, layerName);
                     }
                 }
-                
-                // 5. Si el offset negativo falló (fue hacia afuera), probamos con positivo
-                try
-                {
-                    offsetCurves = curve.GetOffsetCurves(setback); // INTENTO 2: Positivo
-                }
-                catch (System.Exception)
-                {
-                    return ObjectId.Null; // Falló en ambos sentidos
-                }
-                
+                try { offsetCurves = curve.GetOffsetCurves(setback); }
+                catch (System.Exception) { return ObjectId.Null; }
                 if (offsetCurves != null && offsetCurves.Count > 0)
                 {
                      Curve offsetCurve = offsetCurves[0] as Curve;
-                     if (offsetCurve != null)
+                     if (offsetCurve != null && offsetCurve.Area < originalArea)
                      {
-                        // Comprobar si la nueva área es MÁS PEQUEÑA
-                        if (offsetCurve.Area < originalArea)
-                        {
-                            // ÉXITO: El offset positivo fue hacia adentro
-                            return AddNetAreaToModelSpace(db, tr, offsetCurve, layerName);
-                        }
+                        return AddNetAreaToModelSpace(db, tr, offsetCurve, layerName);
                      }
                 }
-
-                // Si llegamos aquí, ninguno de los offsets funcionó (p.ej. setback > parcela)
                 return ObjectId.Null;
             }
         }
 
-        // --- NUEVA FUNCIÓN AUXILIAR 6 (Refactorizada) ---
-        /// <summary>
-        /// Añade una entidad (Curva) al ModelSpace, le asigna capa y confirma la transacción.
-        /// </summary>
+        // --- Función Auxiliar 6 (Sin cambios) ---
         private static ObjectId AddNetAreaToModelSpace(Database db, Transaction tr, Curve netAreaCurve, string layerName)
         {
-            // 1. Añadir la nueva entidad al ModelSpace
+            // ... (Esta función no cambia) ...
             BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-            // 2. Asignar capa y añadir
             Entity netAreaEntity = netAreaCurve as Entity;
             netAreaEntity.Layer = layerName;
             btr.AppendEntity(netAreaEntity);
             tr.AddNewlyCreatedDBObject(netAreaEntity, true);
-
-            // 3. Confirmar la transacción
             tr.Commit();
-            
-            // Devolver el ID de la nueva polilínea creada
             return netAreaEntity.ObjectId;
+        }
+
+        // --- NUEVA FUNCIÓN AUXILIAR 7 ---
+        /// <summary>
+        /// Resta un conjunto de afecciones de una polilínea de área neta.
+        /// Dibuja el resultado en la capa 'AREA_VALIDA_FINAL'.
+        /// </summary>
+        /// <returns>Una colección de ObjectIds de las polilíneas resultantes.</returns>
+        private static ObjectIdCollection SubtractAffections(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds)
+        {
+            ObjectIdCollection finalAreaIds = new ObjectIdCollection();
+            string layerName = "AREA_VALIDA_FINAL";
+            Color color = Color.FromRgb(0, 255, 0); // Verde
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // 1. Crear la nueva capa
+                    CreateLayer(db, tr, layerName, color);
+
+                    // 2. Abrir el área neta y convertirla a Región
+                    Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
+                    if (netAreaCurve == null) return finalAreaIds;
+                    
+                    DBObjectCollection netAreaRegions = new DBObjectCollection();
+                    // Convertir la curva a Región (Region.CreateFromCurves devuelve una colección)
+                    netAreaRegions = Region.CreateFromCurves(new DBObjectCollection { netAreaCurve });
+                    if (netAreaRegions.Count == 0) return finalAreaIds;
+                    Region baseRegion = netAreaRegions[0] as Region;
+
+                    // 3. Procesar y restar cada afección
+                    foreach (ObjectId affId in affectionIds)
+                    {
+                        Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
+                        if (affCurve == null) continue;
+
+                        DBObjectCollection affRegions = Region.CreateFromCurves(new DBObjectCollection { affCurve });
+                        if (affRegions.Count > 0)
+                        {
+                            Region affRegion = affRegions[0] as Region;
+                            // La operación booleana (resta) modifica la 'baseRegion'
+                            baseRegion.BooleanOperation(BooleanOperationType.BoolSubtract, affRegion);
+                        }
+                    }
+
+                    // 4. Si la región base (ahora con agujeros) sigue existiendo
+                    if (!baseRegion.IsDisposed && baseRegion.Area > 0.001)
+                    {
+                        // 5. Añadir la región resultante al ModelSpace
+                        BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                        BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                        
+                        baseRegion.Layer = layerName;
+                        btr.AppendEntity(baseRegion);
+                        tr.AddNewlyCreatedDBObject(baseRegion, true);
+                        
+                        // NOTA: 'baseRegion' es ahora el área válida.
+                        // Para la optimización, podríamos querer explotarla (Explode) de nuevo a Polilíneas
+                        // Pero por ahora, la dibujamos como Región.
+                        finalAreaIds.Add(baseRegion.ObjectId);
+                    }
+
+                    // 6. Confirmar la transacción
+                    tr.Commit();
+                    return finalAreaIds;
+                }
+                catch (System.Exception ex)
+                {
+                    Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nERROR durante la resta booleana: {ex.Message}");
+                    tr.Abort();
+                    return new ObjectIdCollection(); // Devolver vacío si falla
+                }
+            }
         }
     }
 }
