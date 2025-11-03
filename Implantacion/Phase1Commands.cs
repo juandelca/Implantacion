@@ -45,7 +45,8 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             Database db = doc.Database;
 
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v30 - Optimización por Regiones) ---");
+            // --- CAMBIO DE VERSIÓN ---
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v31 - Corrección PointInRegion) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers ---
             List<TrackerModel> trackerLibrary;
@@ -114,8 +115,8 @@ namespace Civil3D_Phase1
             if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo). Cancelando."); return; }
             ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada en 'AREA_NETA'!");
 
-            // 4b. Restar Afecciones (Llamando a la v30 corregida)
-            ObjectIdCollection finalValidAreaIds; // <-- AHORA CONTENDRÁ IDs DE REGIONES
+            // 4b. Restar Afecciones (Llamando a la v30)
+            ObjectIdCollection finalValidAreaIds; // <-- CONTENDRÁ IDs DE REGIONES
             if (affectionIds.Count > 0)
             {
                 ed.WriteMessage("\nRestando afecciones del Área Neta...");
@@ -143,7 +144,6 @@ namespace Civil3D_Phase1
                 return;
             }
             
-            // --- NUEVA COMPROBACIÓN ---
             if (winningLayout.TotalTrackers == 0)
             {
                 ed.WriteMessage("\nAVISO: La optimización se completó, pero no caben trackers en el área válida.");
@@ -252,16 +252,13 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'SubtractAffections' (v30 - CORREGIDA) ---
-        /// <summary>
-        /// Resta afecciones y guarda el resultado como REGION.
-        /// </summary>
+        // --- FUNCIÓN 'SubtractAffections_v30' (Sin cambios) ---
         private static ObjectIdCollection SubtractAffections_v30(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds)
         {
             ObjectIdCollection finalAreaIds = new ObjectIdCollection();
             string layerName = "AREA_VALIDA_FINAL";
             Color color = Color.FromRgb(0, 255, 0); // Verde
-            List<Region> regionsToDispose = new List<Region>(); // Para limpiar memoria
+            List<Region> regionsToDispose = new List<Region>();
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -298,7 +295,6 @@ namespace Civil3D_Phase1
                         btr.AppendEntity(baseRegion);
                         tr.AddNewlyCreatedDBObject(baseRegion, true);
                         
-                        // --- GUARDAMOS EL ID DE LA REGIÓN ---
                         finalAreaIds.Add(baseRegion.ObjectId);
                     }
 
@@ -311,10 +307,9 @@ namespace Civil3D_Phase1
                 }
                 finally
                 {
-                    // Limpiar todas las regiones temporales (excepto la baseRegion que se guarda)
                     foreach (Region r in regionsToDispose) 
                     { 
-                        if (r != null && !r.IsDisposed && !r.IsWriteEnabled && !r.IsReadEnabled) 
+                        if (r != null && !r.IsDisposed && !r.IsReadEnabled && !r.IsReadEnabled) 
                             r.Dispose(); 
                     }
                 }
@@ -323,7 +318,7 @@ namespace Civil3D_Phase1
             }
         }
         
-        // --- NUEVA FUNCIÓN AUXILIAR (para el caso de 0 afecciones) ---
+        // --- ConvertCurveToRegion (Sin cambios) ---
         private static ObjectIdCollection ConvertCurveToRegion(Database db, ObjectId curveId, string layerName, Color color)
         {
              using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -353,15 +348,11 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunOptimizationLoop' (v30 - CORREGIDA) ---
-        /// <summary>
-        /// Ejecuta el bucle de optimización usando REGIONES.
-        /// </summary>
+        // --- RunOptimizationLoop_v30 (Sin cambios) ---
         private static LayoutResult RunOptimizationLoop_v30(Database db, ObjectIdCollection validRegionIds, TrackerModel tracker, double pitchNS)
         {
             LayoutResult bestLayout = new LayoutResult { TotalTrackers = 0 };
 
-            // 1. Abrir las REGIONES válidas
             List<Region> validRegions = new List<Region>();
             Extents3d totalExtents = new Extents3d();
             bool extentsInitialized = false;
@@ -370,7 +361,6 @@ namespace Civil3D_Phase1
             {
                 foreach (ObjectId id in validRegionIds)
                 {
-                    // --- ABRIR COMO REGIÓN ---
                     Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
                     if (region != null)
                     { 
@@ -386,14 +376,10 @@ namespace Civil3D_Phase1
                         }
                     }
                 }
-                // No necesitamos 'tr.Commit()' o 'tr.Abort()' aquí, 'validRegions'
-                // solo se usará para 'IsPointInsideRegions' que abre su propia transacción.
-                // PERO, para 'Extents' sí.
-            } // La transacción se cierra, los objetos 'region' se desechan
+            } 
 
-            if (validRegions.Count == 0) return null; // <-- ESTE ERA EL FALLO ANTERIOR
+            if (validRegions.Count == 0) return null; 
 
-            // 3. El Bucle de 100 Iteraciones
             for (int i = 0; i < 100; i++)
             {
                 double currentOffsetEO = 0.1 + (i * 0.1); 
@@ -403,16 +389,13 @@ namespace Civil3D_Phase1
                     TrackersToDraw = new List<Polyline>() 
                 };
 
-                // 4. Iterar la Grilla
                 for (double y = totalExtents.MinPoint.Y; y < totalExtents.MaxPoint.Y; y += pitchNS)
                 {
                     double x = totalExtents.MinPoint.X;
                     while (x < totalExtents.MaxPoint.X)
                     {
-                        // 5. Probar Tracker Largo
                         Point3d centerPt = new Point3d(x + (tracker.longitud_largo / 2.0), y + (tracker.ancho_huella_ns / 2.0), 0);
                         
-                        // 6. Test de Colisión (USANDO Region.Contains)
                         if (IsPointInsideRegions(db, validRegionIds, centerPt))
                         {
                             currentLayout.LongTrackers++;
@@ -421,7 +404,6 @@ namespace Civil3D_Phase1
                         }
                         else
                         {
-                            // 7. Si el largo no cabe, probar corto
                             if (tracker.longitud_corto > 0.01)
                             {
                                 centerPt = new Point3d(x + (tracker.longitud_corto / 2.0), y + (tracker.ancho_huella_ns / 2.0), 0);
@@ -438,7 +420,6 @@ namespace Civil3D_Phase1
                     }
                 }
 
-                // 8. Guardar el mejor resultado
                 currentLayout.TotalTrackers = currentLayout.LongTrackers + currentLayout.ShortTrackers;
                 if (currentLayout.TotalTrackers > bestLayout.TotalTrackers)
                 {
@@ -449,13 +430,12 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- FUNCIÓN 'IsPointInside' (v30 - CORREGIDA) ---
+        // --- FUNCIÓN 'IsPointInsideRegions' (v31 - CORREGIDA) ---
         /// <summary>
         /// Comprueba si un punto está dentro de CUALQUIERA de las REGIONES.
         /// </summary>
         private static bool IsPointInsideRegions(Database db, ObjectIdCollection regionIds, Point3d testPoint)
         {
-            // Usamos una transacción CORTA solo para esta comprobación
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 foreach (ObjectId id in regionIds)
@@ -463,8 +443,8 @@ namespace Civil3D_Phase1
                     Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
                     if (region != null)
                     {
-                        // --- USAMOS LA FUNCIÓN NATIVA DE AUTOCAD ---
-                        if (region.Contains(testPoint))
+                        // --- CORRECCIÓN: De .Contains a .PointInRegion ---
+                        if (region.PointInRegion(testPoint))
                         {
                             tr.Abort(); // Encontrado, no necesitamos más
                             return true;
