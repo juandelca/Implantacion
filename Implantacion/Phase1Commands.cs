@@ -13,7 +13,7 @@ using Autodesk.AutoCAD.Colors; // Necesario para los colores de capa
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
-//  ↓↓↓ ¡¡ESTA LÍNEA ES LA QUE SIGUE FALTANDO EN TU REPOSITORIO!! ↓↓↓
+//  ↓↓↓ ¡¡ESTA ES LA LÍNEA QUE FALTA!! ↓↓↓
 using Autodesk.Civil.DatabaseServices.Styles; 
 
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
@@ -31,7 +31,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v10 - VERSIÓN COMPLETA) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v11 - VERIFICADO) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -98,7 +98,7 @@ namespace Civil3D_Phase1
         }
 
 
-        [MethodImpl(MethodImplOptions.NoInlining)] // Evita problemas de JIT
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [CommandMethod("FASE1")]
         public void RunPhase1()
         {
@@ -109,7 +109,7 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             CivilDocument cdoc = CivilApplication.ActiveDocument; 
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v10 - COMPLETA) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v11 - VERIFICADO) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
