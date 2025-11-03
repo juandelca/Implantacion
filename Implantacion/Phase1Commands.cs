@@ -13,7 +13,7 @@ using Autodesk.AutoCAD.Colors; // Necesario para los colores de capa
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
-using Autodesk.Civil.DatabaseServices.Styles; // Necesario para el análisis de estilos
+using Autodesk.Civil.DatabaseServices.Styles; // <-- ESTA LÍNEA ES NUEVA Y ARREGLA LOS ERRORES 'CS0246' y 'CS0103'
 
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
 
@@ -29,8 +29,7 @@ namespace Civil3D_Phase1
             if (Application.DocumentManager.MdiActiveDocument != null)
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
-                // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v5 - Análisis Pendiente) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v6 - Corrección Poly3d) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -61,7 +60,7 @@ namespace Civil3D_Phase1
             }
         }
 
-        // --- FUNCIÓN AUXILIAR PARA APLANAR POLILÍNEAS ---
+        // --- FUNCIÓN AUXILIAR PARA APLANAR Polyline (para inputs de usuario) ---
         private Polyline AplanarPolyline(Polyline polyOriginal)
         {
             Polyline polyPlana = new Polyline();
@@ -75,6 +74,31 @@ namespace Civil3D_Phase1
             return polyPlana;
         }
 
+        // --- NUEVA FUNCIÓN AUXILIAR PARA APLANAR Polyline3d (para análisis de pendiente) ---
+        // Esto arregla el error 'CS1061'
+        private Polyline AplanarPolyline3d(Polyline3d p3d, Transaction tr)
+        {
+            Polyline polyPlana = new Polyline();
+            polyPlana.Normal = Vector3d.ZAxis;
+            polyPlana.Elevation = 0.0;
+
+            // Iteramos por los IDs de los vértices de la Polyline3d
+            foreach (ObjectId vertexId in p3d)
+            {
+                // Abrimos cada vértice
+                Autodesk.AutoCAD.DatabaseServices.DBObject vtxObj = tr.GetObject(vertexId, OpenMode.ForRead);
+                if (vtxObj is PolylineVertex3d)
+                {
+                    PolylineVertex3d vtx = vtxObj as PolylineVertex3d;
+                    // Extraemos solo las coordenadas X, Y
+                    Point2d pt2d = new Point2d(vtx.Position.X, vtx.Position.Y);
+                    polyPlana.AddVertexAt(polyPlana.NumberOfVertices, pt2d, 0, 0, 0);
+                }
+            }
+            polyPlana.Closed = p3d.Closed;
+            return polyPlana;
+        }
+
 
         [CommandMethod("FASE1")]
         public void RunPhase1()
@@ -84,10 +108,9 @@ namespace Civil3D_Phase1
             if (doc == null) return;
             Database db = doc.Database;
             Editor ed = doc.Editor;
-            CivilDocument cdoc = CivilApplication.ActiveDocument; // Necesario para el terreno
+            CivilDocument cdoc = CivilApplication.ActiveDocument; 
 
-            // --- CAMBIO DE VERSIÓN AQUÍ ---
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v5 - Análisis Pendiente) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v6 - Corrección Poly3d) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             // (El código de selección es idéntico al anterior)
@@ -126,8 +149,8 @@ namespace Civil3D_Phase1
             // --- 2. TRANSACCIÓN PARA PROCESAR LOS DATOS ---
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                Region parcelaRegion = null; // Región del Área Neta 2D
-                Region slopeRegionOK = new Region(); // Región de pendientes válidas
+                Region parcelaRegion = null; 
+                Region slopeRegionOK = new Region(); 
                 ObjectId debugLayerId = ObjectId.Null;
                 BlockTableRecord btr = null;
 
@@ -194,57 +217,53 @@ namespace Civil3D_Phase1
                     ed.WriteMessage("\nIniciando Paso 1b: Análisis de Pendiente del Terreno...");
                     TinSurface terreno = tr.GetObject(terrenoId, OpenMode.ForRead) as TinSurface;
                     
-                    // Definimos los rangos de pendiente. Queremos de 0% a 15%
+                    // Clases con namespace completo para evitar errores
                     SurfaceAnalysisSlopeRange[] slopeRanges = new SurfaceAnalysisSlopeRange[]
                     {
-                        // Rango 1: 0% a 15% (Este es el que nos interesa)
                         new SurfaceAnalysisSlopeRange(0.0, 15.0),
-                        // Rango 2: > 15% (El resto)
                         new SurfaceAnalysisSlopeRange(15.0, 9999.0)
                     };
                     
-                    // Obtenemos los polígonos del análisis. IMPORTANTE: Usamos 'SurfaceAnalysisDirection.North'
                     ObjectIdCollection polyIds = terreno.Analysis.GetSlopeData(slopeRanges, SurfaceAnalysisDirection.North);
 
-                    // La API nos devuelve polígonos para TODOS los rangos.
-                    // El primer rango (índice 0) corresponde a 0-15%.
-                    // Los polígonos de ese rango están en polyIds[0]
                     ObjectId polyIdRange1 = polyIds[0];
-                    DBObject polyObj = tr.GetObject(polyIdRange1, OpenMode.ForRead);
+                    // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.DBObject'
+                    Autodesk.AutoCAD.DatabaseServices.DBObject polyObj = tr.GetObject(polyIdRange1, OpenMode.ForRead);
                     
-                    // Este objeto es un "contenedor" de polilíneas (Polyline3d)
+                    // CORRECCIÓN AMBIGÜEDAD: Especificamos 'Autodesk.AutoCAD.DatabaseServices.DBObjectCollection'
+                    Autodesk.AutoCAD.DatabaseServices.DBObjectCollection polyCollection = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection();
+
                     if (polyObj is Polyline3d)
                     {
-                        // Si es una sola polilínea, la procesamos
-                        Polyline3d p3d = polyObj as Polyline3d;
-                        Polyline p2d = AplanarPolyline(p3d.ToPolyline()); // La aplanamos
+                        polyCollection.Add(polyObj);
+                    }
+                    else if (polyObj is Autodesk.AutoCAD.DatabaseServices.DBObjectCollection)
+                    {
+                        polyCollection = polyObj as Autodesk.AutoCAD.DatabaseServices.DBObjectCollection;
+                    }
+
+                    ed.WriteMessage($"\nDEBUG: Encontradas {polyCollection.Count} zonas de pendiente válida (0-15%).");
+                    foreach (Autodesk.AutoCAD.DatabaseServices.DBObject obj in polyCollection)
+                    {
+                        Polyline3d p3d = obj as Polyline3d;
+                        if (p3d == null) continue;
+                        
+                        // CORRECCIÓN ERROR 'ToPolyline': Usamos la nueva función auxiliar
+                        Polyline p2d = AplanarPolyline3d(p3d, tr); 
                         p2d.LayerId = debugLayerId;
                         p2d.ColorIndex = 2; // Amarillo
                         btr.AppendEntity(p2d);
                         tr.AddNewlyCreatedDBObject(p2d, true);
 
-                        Region regionValida = Region.CreateFromCurves(new DBObjectCollection { p2d })[0] as Region;
-                        slopeRegionOK.BooleanOperation(BooleanOperationType.BoolUnite, regionValida);
-                    }
-                    else if (polyObj is DBObjectCollection)
-                    {
-                        // Si es una colección de polilíneas (lo más común)
-                        DBObjectCollection polyCollection = polyObj as DBObjectCollection;
-                        ed.WriteMessage($"\nDEBUG: Encontradas {polyCollection.Count} zonas de pendiente válida (0-15%).");
-                        foreach (DBObject obj in polyCollection)
+                        // Envolvemos en try/catch por si la polilínea del terreno también es inválida
+                        try
                         {
-                            Polyline3d p3d = obj as Polyline3d;
-                            if (p3d == null) continue;
-                            
-                            Polyline p2d = AplanarPolyline(p3d.ToPolyline()); // La aplanamos
-                            p2d.LayerId = debugLayerId;
-                            p2d.ColorIndex = 2; // Amarillo
-                            btr.AppendEntity(p2d);
-                            tr.AddNewlyCreatedDBObject(p2d, true);
-
-                            // Creamos una región para esta zona y la "unimos" a la región total de pendientes
-                            Region regionValida = Region.CreateFromCurves(new DBObjectCollection { p2d })[0] as Region;
+                            Region regionValida = Region.CreateFromCurves(new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { p2d })[0] as Region;
                             slopeRegionOK.BooleanOperation(BooleanOperationType.BoolUnite, regionValida);
+                        }
+                        catch (System.Exception ex)
+                        {
+                             ed.WriteMessage($"\n¡AVISO! Una zona de pendiente tiene geometría inválida y será IGNORADA. {ex.Message}");
                         }
                     }
                     
@@ -253,16 +272,10 @@ namespace Civil3D_Phase1
                     // --- PASO 1c: INTERSECCIÓN 2D y 3D ---
                     ed.WriteMessage("\nIniciando Paso 1c: Creando Mapa de Validez (Área Neta Y Pendiente Válida)...");
                     
-                    // 'parcelaRegion' = Área Neta 2D
-                    // 'slopeRegionOK' = Áreas con pendiente N-S < 15%
-                    // Hacemos la intersección de ambas.
                     parcelaRegion.BooleanOperation(BooleanOperationType.BoolIntersect, slopeRegionOK);
 
-                    // 'parcelaRegion' AHORA CONTIENE EL "MAPA VÁLIDO" FINAL
-                    
                     ed.WriteMessage("\n¡Mapa de Validez final calculado con éxito!");
                     
-                    // Dibujamos el resultado final en Verde
                     parcelaRegion.LayerId = debugLayerId;
                     parcelaRegion.ColorIndex = 3; // Color Verde
                     btr.AppendEntity(parcelaRegion);
