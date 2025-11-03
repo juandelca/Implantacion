@@ -49,7 +49,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v21 - FINALIZADO) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v22 - Dibujado Trackers) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -112,7 +112,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v21 - FINALIZADO) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v22 - Dibujado Trackers) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
@@ -149,11 +149,6 @@ namespace Civil3D_Phase1
             {
                 try
                 {
-                    ed.WriteMessage("\nDEBUG: Creando capa 'DEBUG_FLAT'...");
-                    ObjectId debugLayerId = CreateLayer(db, "DEBUG_FLAT", Color.FromColorIndex(ColorMethod.ByAci, 1)); // Color Rojo
-                    BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
-                    BlockTableRecord btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
-
                     ed.WriteMessage("\nIniciando Paso 1: Cálculo del Área Neta...");
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaOriginal = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
                     if (parcelaOriginal == null || !parcelaOriginal.Closed) { tr.Abort(); return; }
@@ -191,14 +186,6 @@ namespace Civil3D_Phase1
                     }
                     
                     ed.WriteMessage("\n¡Mapa de Validez (Solo 2D) calculado con éxito!");
-                    
-                    // (Opcional: Dibujar el mapa válido para depuración)
-                    // Region mapaValidoDebug = mapaValido.Clone() as Region;
-                    // mapaValidoDebug.LayerId = debugLayerId;
-                    // mapaValidoDebug.ColorIndex = 3; // Color Verde
-                    // btr.AppendEntity(mapaValidoDebug);
-                    // tr.AddNewlyCreatedDBObject(mapaValidoDebug, true);
-
                     tr.Commit();
                 }
                 catch (System.Exception ex)
@@ -299,9 +286,14 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- Iniciando Paso 4: Dibujando Layout Ganador ---");
             try
             {
+                // --- INICIO DE LA MODIFICACIÓN (v22) ---
+                
+                // Crear capas para el output
+                ObjectId layerLargosId = CreateLayer(db, "TRACKERS_LARGOS (37.7m)", Color.FromColorIndex(ColorMethod.ByAci, 1)); // Rojo
+                ObjectId layerCortosId = CreateLayer(db, "TRACKERS_CORTOS (17.4m)", Color.FromColorIndex(ColorMethod.ByAci, 5)); // Azul
+                
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    ObjectId layoutLayerId = CreateLayer(db, "LAYOUT_GANADOR", Color.FromColorIndex(ColorMethod.ByAci, 4)); // Color Cyan
                     BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
                     BlockTableRecord btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
 
@@ -326,21 +318,37 @@ namespace Civil3D_Phase1
                             // Dibujamos los segmentos que SÍ tienen trackers
                             for (int s = 0; s < puntosOrdenados.Count; s += 2)
                             {
-                                Point3d p1 = puntosOrdenados[s];
-                                Point3d p2 = puntosOrdenados[s + 1];
+                                Point3d p1 = puntosOrdenados[s]; // Punto Sur
+                                Point3d p2 = puntosOrdenados[s + 1]; // Punto Norte
                                 double segmentLength = p1.DistanceTo(p2);
                                 
                                 int numLargos = (int)Math.Floor(segmentLength / LONGITUD_LARGA);
-                                int numCortos = (int)Math.Floor((segmentLength - (numLargos * LONGITUD_LARGA)) / LONGITUD_CORTA);
+                                double remainingLength = segmentLength - (numLargos * LONGITUD_LARGA);
+                                int numCortos = (int)Math.Floor(remainingLength / LONGITUD_CORTA);
 
-                                // Si el segmento es útil (cabe al menos un tracker), lo dibujamos
-                                if (numLargos > 0 || numCortos > 0)
+                                Point3d currentDrawPoint = p1; // Empezamos a dibujar desde el sur
+                                Vector3d drawVector = Vector3d.YAxis; // Hacia el norte
+
+                                // Dibujar los trackers largos
+                                for (int L = 0; L < numLargos; L++)
                                 {
-                                    // Creamos una línea para este segmento válido
-                                    Line segmentoValido = new Line(p1, p2);
-                                    segmentoValido.LayerId = layoutLayerId;
-                                    btr.AppendEntity(segmentoValido);
-                                    tr.AddNewlyCreatedDBObject(segmentoValido, true);
+                                    Point3d trackerEnd = currentDrawPoint.Add(drawVector * LONGITUD_LARGA);
+                                    Line trackerLine = new Line(currentDrawPoint, trackerEnd);
+                                    trackerLine.LayerId = layerLargosId;
+                                    btr.AppendEntity(trackerLine);
+                                    tr.AddNewlyCreatedDBObject(trackerLine, true);
+                                    currentDrawPoint = trackerEnd; // Mover al final para el siguiente
+                                }
+
+                                // Dibujar los trackers cortos
+                                for (int C = 0; C < numCortos; C++)
+                                {
+                                    Point3d trackerEnd = currentDrawPoint.Add(drawVector * LONGITUD_CORTA);
+                                    Line trackerLine = new Line(currentDrawPoint, trackerEnd);
+                                    trackerLine.LayerId = layerCortosId;
+                                    btr.AppendEntity(trackerLine);
+                                    tr.AddNewlyCreatedDBObject(trackerLine, true);
+                                    currentDrawPoint = trackerEnd; // Mover al final
                                 }
                             }
                         }
@@ -351,7 +359,9 @@ namespace Civil3D_Phase1
                     tr.Commit();
                 } // Fin de la transacción de dibujado
                 
-                ed.WriteMessage("\n¡Layout Ganador dibujado con éxito en la capa 'LAYOUT_GANADOR'!");
+                ed.WriteMessage("\n¡Trackers dibujados con éxito en capas 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'!");
+                
+                // --- FIN DE LA MODIFICACIÓN (v22) ---
             }
             catch (System.Exception ex)
             {
