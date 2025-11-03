@@ -13,7 +13,7 @@ using Autodesk.AutoCAD.Colors; // Necesario para los colores de capa
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
-//  ↓↓↓ ¡¡ESTA LÍNEA ES LA QUE FALTA EN TU CÓDIGO ACTUAL!! ↓↓↓
+//  ↓↓↓ ¡¡ESTA LÍNEA ES LA QUE SIGUE FALTANDO EN TU REPOSITORIO!! ↓↓↓
 using Autodesk.Civil.DatabaseServices.Styles; 
 
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
@@ -31,7 +31,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v9 - Corrección Final) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v10 - VERSIÓN COMPLETA) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -98,6 +98,7 @@ namespace Civil3D_Phase1
         }
 
 
+        [MethodImpl(MethodImplOptions.NoInlining)] // Evita problemas de JIT
         [CommandMethod("FASE1")]
         public void RunPhase1()
         {
@@ -108,7 +109,7 @@ namespace Civil3D_Phase1
             Editor ed = doc.Editor;
             CivilDocument cdoc = CivilApplication.ActiveDocument; 
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v9 - Corrección Final) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v10 - COMPLETA) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
@@ -120,7 +121,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nParcela seleccionada.");
 
             PromptSelectionOptions psoAfecciones = new PromptSelectionOptions();
-            psoAfecciones.MessageForAdding = "\nSeleccione las Polilíñas de Afecciones (o pulse Intro para ninguna): ";
+            psoAfecciones.MessageForAdding = "\nSeleccione las Polilíneas de Afecciones (o pulse Intro para ninguna): ";
             psoAfecciones.MessageForRemoval = "\nEliminar objetos de la selección: ";
             TypedValue[] tvs = new TypedValue[] { new TypedValue((int)DxfCode.Start, "POLYLINE,LWPOLYLINE") };
             SelectionFilter filter = new SelectionFilter(tvs);
