@@ -8,7 +8,7 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-using Autodesk.AutoCAD.BoundaryRepresentation; // <--- NUEVO IMPORT (para Brep)
+// using Autodesk.AutoCAD.BoundaryRepresentation; // <-- ELIMINADO
 
 namespace Civil3D_Phase1
 {
@@ -47,9 +47,9 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v33 - Corrección Brep.IsPointInside) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v34 - Corrección final API Región) ---");
 
-            // --- PASO 1: Cargar Biblioteca de Trackers ---
+            // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
             string dllPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
             string dllDirectory = Path.GetDirectoryName(dllPath);
@@ -431,12 +431,18 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- FUNCIÓN 'IsPointInsideRegions' (v33 - CORREGIDA) ---
+        // --- FUNCIÓN 'IsPointInsideRegions' (v34 - CORREGIDA) ---
         /// <summary>
         /// Comprueba si un punto está dentro de CUALQUIERA de las REGIONES.
         /// </summary>
         private static bool IsPointInsideRegions(Database db, ObjectIdCollection regionIds, Point3d testPoint)
         {
+            // Vector de "rayo" (apuntando hacia arriba)
+            Vector3d rayVector = Vector3d.ZAxis;
+            
+            // Tolerancia
+            Tolerance tol = new Tolerance(1e-6, 1e-6);
+
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 foreach (ObjectId id in regionIds)
@@ -444,18 +450,23 @@ namespace Civil3D_Phase1
                     Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
                     if (region != null)
                     {
-                        // --- CORRECCIÓN v33: Usar Brep.IsPointInside ---
-                        // 1. Crear un objeto Brep a partir de la Región
-                        using (Brep brep = new Brep(region))
+                        // --- CORRECCIÓN v34: Usar Hittest (Ray Casting) ---
+                        // Este es el método nativo de AutoCAD para "disparar un rayo"
+                        // y ver cuántas veces golpea el objeto.
+                        
+                        // Hacemos un ray-cast desde nuestro punto hacia arriba (Z+)
+                        region.SubentityHittest(testPoint, rayVector, 0, 0, tol, tol);
+                        
+                        // Obtenemos los resultados del hit
+                        SubentityId[] hitSubIds = region.GetHitSubentityIds();
+
+                        if (hitSubIds != null && hitSubIds.Length > 0)
                         {
-                            if (brep != null)
+                            // Si el número de "hits" es IMPAR, el punto está dentro.
+                            if (hitSubIds.Length % 2 == 1)
                             {
-                                // 2. Comprobar si el punto está dentro
-                                if (brep.IsPointInside(testPoint))
-                                {
-                                    tr.Abort(); // Encontrado
-                                    return true;
-                                }
+                                tr.Abort();
+                                return true;
                             }
                         }
                     }
