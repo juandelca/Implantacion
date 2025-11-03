@@ -14,7 +14,7 @@ using Autodesk.AutoCAD.Colors; // Necesario para los colores de capa
 /* --- Dependencias de Civil 3D --- */
 using Autodesk.Civil.ApplicationServices;
 using Autodesk.Civil.DatabaseServices;
-// Ya no necesitamos 'Autodesk.Civil.DatabaseServices.Styles'
+// (No necesitamos 'Styles' en esta versión)
 
 [assembly: CommandClass(typeof(Civil3D_Phase1.Phase1Commands))]
 
@@ -49,7 +49,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v19 - Sin Análisis Pendiente) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v20 - Lógica Ganador Corregida) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -112,7 +112,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v19 - Sin Análisis Pendiente) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v20 - Lógica Ganador Corregida) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
@@ -136,27 +136,23 @@ namespace Civil3D_Phase1
                 ed.WriteMessage($"\n{afeccionesIds.Count} afecciones seleccionadas.");
             }
             else { ed.WriteMessage("\nNo se seleccionaron afecciones."); }
-
-            // --- SELECCIÓN DE TERRENO OMITIDA ---
+            
             ed.WriteMessage("\n(Omitiendo selección de Terreno. El análisis de pendiente está desactivado en esta versión.)");
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
             
-            // --- Declaraciones fuera de la transacción ---
             List<LayoutResult> todosLosResultados = new List<LayoutResult>();
-            Region mapaValido = new Region(); // El 'Mapa Válido' final (Región)
+            Region mapaValido = new Region(); 
 
             // --- 2. TRANSACCIÓN PARA PASO 1 (CÁLCULO DE MAPA VÁLIDO) ---
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    // --- PASO DE DEPURACIÓN: CREAR CAPA ---
                     ed.WriteMessage("\nDEBUG: Creando capa 'DEBUG_FLAT'...");
                     ObjectId debugLayerId = CreateLayer(db, "DEBUG_FLAT", Color.FromColorIndex(ColorMethod.ByAci, 1)); // Color Rojo
                     BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
                     BlockTableRecord btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
 
-                    // --- PASO 1a: ANÁLISIS 2D (PARCELA - AFECCIONES) ---
                     ed.WriteMessage("\nIniciando Paso 1a: Cálculo del Área Neta...");
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaOriginal = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
                     if (parcelaOriginal == null || !parcelaOriginal.Closed)
@@ -170,7 +166,6 @@ namespace Civil3D_Phase1
                     try
                     {
                         Autodesk.AutoCAD.DatabaseServices.DBObjectCollection parcelaCurves = new Autodesk.AutoCAD.DatabaseServices.DBObjectCollection { parcelaPlana };
-                        // Asignamos el resultado a nuestra variable 'mapaValido'
                         mapaValido = Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(parcelaCurves)[0] as Autodesk.AutoCAD.DatabaseServices.Region;
                     }
                     catch (System.Exception ex)
@@ -198,16 +193,13 @@ namespace Civil3D_Phase1
                         i++;
                     }
                     
-                    ed.WriteMessage("\nÁrea Neta 2D (Región) calculada con éxito.");
-
-                    // --- PASO 1b y 1c ELIMINADOS ---
                     ed.WriteMessage("\n¡Mapa de Validez (Solo 2D) calculado con éxito!");
                     
-                    mapaValido.LayerId = debugLayerId;
-                    mapaValido.ColorIndex = 3; // Color Verde
-                    btr.AppendEntity(mapaValido);
-                    tr.AddNewlyCreatedDBObject(mapaValido, true);
-                    ed.WriteMessage("\nDEBUG: Mapa de Validez final dibujado en capa 'DEBUG_FLAT'.");
+                    Region mapaValidoDebug = mapaValido.Clone() as Region;
+                    mapaValidoDebug.LayerId = debugLayerId;
+                    mapaValidoDebug.ColorIndex = 3; // Color Verde
+                    btr.AppendEntity(mapaValidoDebug);
+                    tr.AddNewlyCreatedDBObject(mapaValidoDebug, true);
 
                     tr.Commit();
                 }
@@ -215,7 +207,7 @@ namespace Civil3D_Phase1
                 {
                     ed.WriteMessage($"\n¡Error Inesperado en Paso 1! {ex.Message} {ex.StackTrace}");
                     tr.Abort();
-                    return; // Salir si el Paso 1 falla
+                    return; 
                 }
             } // La transacción se cierra aquí
 
@@ -224,7 +216,6 @@ namespace Civil3D_Phase1
 
             try
             {
-                // Obtenemos los límites (Bounding Box) de nuestro mapa válido
                 Extents3d bounds = mapaValido.Bounds.Value;
                 Point3d minPt = bounds.MinPoint;
                 Point3d maxPt = bounds.MaxPoint;
@@ -245,9 +236,7 @@ namespace Civil3D_Phase1
                             new Point3d(currentX, maxPt.Y + 100.0, 0)
                         );
 
-                        // --- Lógica de Intersección Corregida (de v17) ---
                         Point3dCollection intersectionPoints = new Point3dCollection();
-
                         mapaValido.IntersectWith(ejeVertical, Intersect.OnBothOperands, intersectionPoints, IntPtr.Zero, IntPtr.Zero);
 
                         if (intersectionPoints.Count > 0 && intersectionPoints.Count % 2 == 0)
@@ -258,7 +247,6 @@ namespace Civil3D_Phase1
                                 puntosOrdenados.Add(pt);
                             }
                             puntosOrdenados = puntosOrdenados.OrderBy(p => p.Y).ToList();
-                            // --- Fin Lógica Corregida ---
 
                             for (int s = 0; s < puntosOrdenados.Count; s += 2)
                             {
@@ -276,12 +264,13 @@ namespace Civil3D_Phase1
                             }
                         }
                         
-                        intersectionPoints.Dispose(); // Liberar memoria
-                        ejeVertical.Dispose(); // Liberar memoria de la línea
+                        intersectionPoints.Dispose(); 
+                        ejeVertical.Dispose(); 
                     } 
 
                     todosLosResultados.Add(new LayoutResult(currentOffset, totalStrings, totalLargos, totalCortos));
-                    ed.WriteMessage($"Offset {currentOffset.ToString("F1")}m: {totalStrings} strings ({totalLargos} largos, {totalCortos} cortos)");
+                    // No imprimimos cada línea para que vaya más rápido
+                    // ed.WriteMessage($"Offset {currentOffset.ToString("F1")}m: {totalStrings} strings...");
                 
                 } // Fin del bucle de offset (100 iteraciones)
 
@@ -292,12 +281,14 @@ namespace Civil3D_Phase1
 
                 LayoutResult ganador = null;
 
+                // Regla 1 (Objetivo): ¿Hay alguno que sume 400?
                 List<LayoutResult> layoutsPerfectos = todosLosResultados
                     .Where(r => r.TotalStrings == OBJETIVO_STRINGS)
                     .ToList();
 
                 if (layoutsPerfectos.Count > 0)
                 {
+                    // Regla 2 (Prioridad): Si hay varios con 400, elegimos el que tenga más trackers largos
                     ganador = layoutsPerfectos.OrderByDescending(r => r.TrackersLargos).First();
                     ed.WriteMessage($"\n¡OBJETIVO ALCANZADO! Se encontró un layout con {OBJETIVO_STRINGS} strings.");
                 }
@@ -305,11 +296,24 @@ namespace Civil3D_Phase1
                 {
                     ed.WriteMessage($"\nAVISO: No se alcanzó el objetivo de {OBJETIVO_STRINGS} strings.");
                     
+                    // Regla 3 (Sub-óptimo): Intentar encontrar el mejor POR DEBAJO
                     ganador = todosLosResultados
-                        .Where(r => r.TotalStrings < OBJETIVO_STRINGS) 
-                        .OrderByDescending(r => r.TotalStrings)     
+                        .Where(r => r.TotalStrings < OBJETIVO_STRINGS) // < 400
+                        .OrderByDescending(r => r.TotalStrings)     // El que más se acerque a 400
                         .ThenByDescending(r => r.TrackersLargos)   
-                        .FirstOrDefault(); 
+                        .FirstOrDefault();
+
+                    // --- INICIO DE LA CORRECCIÓN (v20) ---
+                    // Regla 4 (Capacidad Máxima): Si 'ganador' sigue siendo null (porque todos están POR ENCIMA de 400)
+                    if (ganador == null)
+                    {
+                        ed.WriteMessage("\nTodos los layouts superan el objetivo. Seleccionando el de MÁXIMA CAPACIDAD.");
+                        ganador = todosLosResultados
+                            .OrderByDescending(r => r.TotalStrings)     // El que tenga más strings (ej. 625)
+                            .ThenByDescending(r => r.TrackersLargos)   // Y de esos, el que tenga más largos
+                            .FirstOrDefault(); // Coge el primero (el máximo)
+                    }
+                    // --- FIN DE LA CORRECCIÓN (v20) ---
                 }
 
                 if (ganador != null)
@@ -322,7 +326,7 @@ namespace Civil3D_Phase1
                 }
                 else
                 {
-                    ed.WriteMessage("\nERROR: No se pudo seleccionar ningún layout ganador (todos dieron 0 strings o más de 400).");
+                    ed.WriteMessage("\nERROR: No se pudo seleccionar ningún layout ganador (la lista de resultados está vacía).");
                 }
                 
                 // --- PASO 4: DIBUJAR EL RESULTADO ---
