@@ -22,7 +22,8 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
-    <PlatformTarget>x64</PlatformTarget> </PropertyGroup>
+    <PlatformTarget>x64</PlatformTarget> 
+  </PropertyGroup>
   
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
     <DebugType>none</DebugType>
@@ -31,7 +32,8 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
-    <PlatformTarget>x64</PlatformTarget> </PropertyGroup>
+    <PlatformTarget>x64</PlatformTarget> 
+  </PropertyGroup>
 
   <ItemGroup>
     <Reference Include="System" />
@@ -63,6 +65,12 @@
       <HintPath>lib\AeccDbMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    
+    <Reference Include="AcBrMgd">
+      <HintPath>lib\AcBrMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+
   </ItemGroup>
 
   <ItemGroup>
