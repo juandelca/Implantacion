@@ -1,0 +1,43 @@
+name: Build Civil 3D Plugin
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    # 1. Descarga tu código (con la carpeta /lib incluida)
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # 2. Configura msbuild (el compilador de .NET Framework)
+    - name: Setup .NET Framework (msbuild)
+      uses: microsoft/setup-msbuild@v1
+      
+    # --- NUEVO PASO: Restaurar paquetes NuGet ---
+    # 3. Configura NuGet
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    # 4. Restaura el paquete (Newtonsoft.Json)
+    - name: Restore NuGet packages
+      run: nuget restore ${{ github.workspace }}\Civil3D_Phase1.csproj
+
+    # 5. Compila el proyecto
+    - name: Build project
+      run: msbuild ${{ github.workspace }}\Civil3D_Phase1.csproj /p:Configuration=Release /p:Platform=AnyCPU
+
+    # --- PASO MEJORADO: Subir un ZIP con TODO lo necesario ---
+    # 6. Comprime la carpeta de salida
+    - name: Zip Release folder
+      run: |
+        Compress-Archive -Path ${{ github.workspace }}\bin\Release\* -DestinationPath ${{ github.workspace }}\Release.zip
+      shell: powershell
+
+    # 7. Sube el artefacto .zip
+    - name: Upload Full Release Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Civil3D-Phase1-FullRelease
+        path: ${{ github.workspace }}\Release.zip
