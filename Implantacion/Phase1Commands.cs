@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v31 - Corrección PointInRegion) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v32 - Corrección final .Contains) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers ---
             List<TrackerModel> trackerLibrary;
@@ -430,7 +430,7 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- FUNCIÓN 'IsPointInsideRegions' (v31 - CORREGIDA) ---
+        // --- FUNCIÓN 'IsPointInsideRegions' (v32 - CORREGIDA) ---
         /// <summary>
         /// Comprueba si un punto está dentro de CUALQUIERA de las REGIONES.
         /// </summary>
@@ -443,8 +443,10 @@ namespace Civil3D_Phase1
                     Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
                     if (region != null)
                     {
-                        // --- CORRECCIÓN: De .Contains a .PointInRegion ---
-                        if (region.PointInRegion(testPoint))
+                        // --- CORRECCIÓN v32: De .PointInRegion a .Contains ---
+                        // Este era el método correcto de la v30, que ahora
+                        // debería funcionar gracias a la corrección de plataforma x64.
+                        if (region.Contains(testPoint))
                         {
                             tr.Abort(); // Encontrado, no necesitamos más
                             return true;
