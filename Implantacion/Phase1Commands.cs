@@ -49,7 +49,7 @@ namespace Civil3D_Phase1
             {
                 Editor ed = Application.DocumentManager.MdiActiveDocument.Editor;
                 // --- CAMBIO DE VERSIÓN AQUÍ ---
-                ed.WriteMessage("\n--- Plugin Fase 1 (v20 - Lógica Ganador Corregida) cargado. ---");
+                ed.WriteMessage("\n--- Plugin Fase 1 (v21 - FINALIZADO) cargado. ---");
                 ed.WriteMessage("\n--- Escriba 'FASE1' para ejecutar. ---");
             }
         }
@@ -112,7 +112,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v20 - Lógica Ganador Corregida) ---");
+            ed.WriteMessage("\n--- Ejecutando FASE1 (VERSIÓN v21 - FINALIZADO) ---");
 
             // --- 1. SELECCIÓN DE OBJETOS (INPUTS) ---
             PromptEntityOptions peoParcela = new PromptEntityOptions("\nSeleccione la Polilínea de la Parcela: ");
@@ -142,6 +142,7 @@ namespace Civil3D_Phase1
             
             List<LayoutResult> todosLosResultados = new List<LayoutResult>();
             Region mapaValido = new Region(); 
+            LayoutResult ganador = null; // Guardaremos el ganador aquí
 
             // --- 2. TRANSACCIÓN PARA PASO 1 (CÁLCULO DE MAPA VÁLIDO) ---
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -153,13 +154,9 @@ namespace Civil3D_Phase1
                     BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
                     BlockTableRecord btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
 
-                    ed.WriteMessage("\nIniciando Paso 1a: Cálculo del Área Neta...");
+                    ed.WriteMessage("\nIniciando Paso 1: Cálculo del Área Neta...");
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaOriginal = tr.GetObject(parcelaId, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Polyline;
-                    if (parcelaOriginal == null || !parcelaOriginal.Closed)
-                    {
-                        ed.WriteMessage("\nError: La polilínea de parcela no es válida o no está cerrada. Abortando.");
-                        tr.Abort(); return;
-                    }
+                    if (parcelaOriginal == null || !parcelaOriginal.Closed) { tr.Abort(); return; }
                     
                     Autodesk.AutoCAD.DatabaseServices.Polyline parcelaPlana = AplanarPolyline(parcelaOriginal);
                     
@@ -195,19 +192,19 @@ namespace Civil3D_Phase1
                     
                     ed.WriteMessage("\n¡Mapa de Validez (Solo 2D) calculado con éxito!");
                     
-                    Region mapaValidoDebug = mapaValido.Clone() as Region;
-                    mapaValidoDebug.LayerId = debugLayerId;
-                    mapaValidoDebug.ColorIndex = 3; // Color Verde
-                    btr.AppendEntity(mapaValidoDebug);
-                    tr.AddNewlyCreatedDBObject(mapaValidoDebug, true);
+                    // (Opcional: Dibujar el mapa válido para depuración)
+                    // Region mapaValidoDebug = mapaValido.Clone() as Region;
+                    // mapaValidoDebug.LayerId = debugLayerId;
+                    // mapaValidoDebug.ColorIndex = 3; // Color Verde
+                    // btr.AppendEntity(mapaValidoDebug);
+                    // tr.AddNewlyCreatedDBObject(mapaValidoDebug, true);
 
                     tr.Commit();
                 }
                 catch (System.Exception ex)
                 {
                     ed.WriteMessage($"\n¡Error Inesperado en Paso 1! {ex.Message} {ex.StackTrace}");
-                    tr.Abort();
-                    return; 
+                    tr.Abort(); return; 
                 }
             } // La transacción se cierra aquí
 
@@ -224,96 +221,56 @@ namespace Civil3D_Phase1
                 {
                     double currentOffset = Math.Round(i * 0.1, 2); 
                     double startX = minPt.X + currentOffset;
-                    
-                    int totalStrings = 0;
-                    int totalLargos = 0;
-                    int totalCortos = 0;
+                    int totalStrings = 0, totalLargos = 0, totalCortos = 0;
                     
                     for (double currentX = startX; currentX <= maxPt.X; currentX += PITCH)
                     {
-                        Line ejeVertical = new Line(
-                            new Point3d(currentX, minPt.Y - 100.0, 0),
-                            new Point3d(currentX, maxPt.Y + 100.0, 0)
-                        );
-
+                        Line ejeVertical = new Line(new Point3d(currentX, minPt.Y - 100.0, 0), new Point3d(currentX, maxPt.Y + 100.0, 0));
                         Point3dCollection intersectionPoints = new Point3dCollection();
                         mapaValido.IntersectWith(ejeVertical, Intersect.OnBothOperands, intersectionPoints, IntPtr.Zero, IntPtr.Zero);
 
                         if (intersectionPoints.Count > 0 && intersectionPoints.Count % 2 == 0)
                         {
                             List<Point3d> puntosOrdenados = new List<Point3d>();
-                            foreach (Point3d pt in intersectionPoints)
-                            {
-                                puntosOrdenados.Add(pt);
-                            }
+                            foreach (Point3d pt in intersectionPoints) { puntosOrdenados.Add(pt); }
                             puntosOrdenados = puntosOrdenados.OrderBy(p => p.Y).ToList();
 
                             for (int s = 0; s < puntosOrdenados.Count; s += 2)
                             {
-                                Point3d p1 = puntosOrdenados[s];
-                                Point3d p2 = puntosOrdenados[s + 1];
-                                double segmentLength = p1.DistanceTo(p2);
-                                
+                                double segmentLength = puntosOrdenados[s].DistanceTo(puntosOrdenados[s + 1]);
                                 int numLargos = (int)Math.Floor(segmentLength / LONGITUD_LARGA);
                                 double remainingLength = segmentLength - (numLargos * LONGITUD_LARGA);
                                 int numCortos = (int)Math.Floor(remainingLength / LONGITUD_CORTA);
-
                                 totalLargos += numLargos;
                                 totalCortos += numCortos;
                                 totalStrings += (numLargos * 2) + (numCortos * 1);
                             }
                         }
-                        
                         intersectionPoints.Dispose(); 
                         ejeVertical.Dispose(); 
                     } 
-
                     todosLosResultados.Add(new LayoutResult(currentOffset, totalStrings, totalLargos, totalCortos));
-                    // No imprimimos cada línea para que vaya más rápido
-                    // ed.WriteMessage($"Offset {currentOffset.ToString("F1")}m: {totalStrings} strings...");
-                
                 } // Fin del bucle de offset (100 iteraciones)
-
                 ed.WriteMessage("\n--- Bucle de Optimización Terminado ---");
                 
                 // --- PASO 3: SELECCIONAR EL GANADOR ---
                 ed.WriteMessage("\n--- Iniciando Paso 3: Seleccionando Layout Ganador ---");
-
-                LayoutResult ganador = null;
-
-                // Regla 1 (Objetivo): ¿Hay alguno que sume 400?
-                List<LayoutResult> layoutsPerfectos = todosLosResultados
-                    .Where(r => r.TotalStrings == OBJETIVO_STRINGS)
-                    .ToList();
+                List<LayoutResult> layoutsPerfectos = todosLosResultados.Where(r => r.TotalStrings == OBJETIVO_STRINGS).ToList();
 
                 if (layoutsPerfectos.Count > 0)
                 {
-                    // Regla 2 (Prioridad): Si hay varios con 400, elegimos el que tenga más trackers largos
                     ganador = layoutsPerfectos.OrderByDescending(r => r.TrackersLargos).First();
                     ed.WriteMessage($"\n¡OBJETIVO ALCANZADO! Se encontró un layout con {OBJETIVO_STRINGS} strings.");
                 }
                 else
                 {
                     ed.WriteMessage($"\nAVISO: No se alcanzó el objetivo de {OBJETIVO_STRINGS} strings.");
-                    
-                    // Regla 3 (Sub-óptimo): Intentar encontrar el mejor POR DEBAJO
-                    ganador = todosLosResultados
-                        .Where(r => r.TotalStrings < OBJETIVO_STRINGS) // < 400
-                        .OrderByDescending(r => r.TotalStrings)     // El que más se acerque a 400
-                        .ThenByDescending(r => r.TrackersLargos)   
-                        .FirstOrDefault();
-
-                    // --- INICIO DE LA CORRECCIÓN (v20) ---
-                    // Regla 4 (Capacidad Máxima): Si 'ganador' sigue siendo null (porque todos están POR ENCIMA de 400)
+                    ganador = todosLosResultados.Where(r => r.TotalStrings < OBJETIVO_STRINGS).OrderByDescending(r => r.TotalStrings).ThenByDescending(r => r.TrackersLargos).FirstOrDefault();
                     if (ganador == null)
                     {
                         ed.WriteMessage("\nTodos los layouts superan el objetivo. Seleccionando el de MÁXIMA CAPACIDAD.");
-                        ganador = todosLosResultados
-                            .OrderByDescending(r => r.TotalStrings)     // El que tenga más strings (ej. 625)
-                            .ThenByDescending(r => r.TrackersLargos)   // Y de esos, el que tenga más largos
-                            .FirstOrDefault(); // Coge el primero (el máximo)
+                        ganador = todosLosResultados.OrderByDescending(r => r.TotalStrings).ThenByDescending(r => r.TrackersLargos).FirstOrDefault();
                     }
-                    // --- FIN DE LA CORRECCIÓN (v20) ---
                 }
 
                 if (ganador != null)
@@ -326,16 +283,79 @@ namespace Civil3D_Phase1
                 }
                 else
                 {
-                    ed.WriteMessage("\nERROR: No se pudo seleccionar ningún layout ganador (la lista de resultados está vacía).");
+                    ed.WriteMessage("\nERROR: No se pudo seleccionar ningún layout ganador.");
+                    mapaValido.Dispose();
+                    return;
                 }
-                
-                // --- PASO 4: DIBUJAR EL RESULTADO ---
-                ed.WriteMessage("\n(TODO: Implementar el dibujado del layout ganador)");
-
             }
             catch (System.Exception ex)
             {
                 ed.WriteMessage($"\n¡Error Inesperado durante el Bucle de Optimización! {ex.Message} {ex.StackTrace}");
+                mapaValido.Dispose();
+                return;
+            }
+            
+            // --- PASO 4: DIBUJAR EL RESULTADO GANADOR ---
+            ed.WriteMessage("\n--- Iniciando Paso 4: Dibujando Layout Ganador ---");
+            try
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    ObjectId layoutLayerId = CreateLayer(db, "LAYOUT_GANADOR", Color.FromColorIndex(ColorMethod.ByAci, 4)); // Color Cyan
+                    BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
+                    BlockTableRecord btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
+
+                    Extents3d bounds = mapaValido.Bounds.Value;
+                    Point3d minPt = bounds.MinPoint;
+                    Point3d maxPt = bounds.MaxPoint;
+                    
+                    double startX = minPt.X + ganador.Offset; // Usamos el offset ganador
+                    
+                    for (double currentX = startX; currentX <= maxPt.X; currentX += PITCH)
+                    {
+                        Line ejeVertical = new Line(new Point3d(currentX, minPt.Y - 100.0, 0), new Point3d(currentX, maxPt.Y + 100.0, 0));
+                        Point3dCollection intersectionPoints = new Point3dCollection();
+                        mapaValido.IntersectWith(ejeVertical, Intersect.OnBothOperands, intersectionPoints, IntPtr.Zero, IntPtr.Zero);
+
+                        if (intersectionPoints.Count > 0 && intersectionPoints.Count % 2 == 0)
+                        {
+                            List<Point3d> puntosOrdenados = new List<Point3d>();
+                            foreach (Point3d pt in intersectionPoints) { puntosOrdenados.Add(pt); }
+                            puntosOrdenados = puntosOrdenados.OrderBy(p => p.Y).ToList();
+
+                            // Dibujamos los segmentos que SÍ tienen trackers
+                            for (int s = 0; s < puntosOrdenados.Count; s += 2)
+                            {
+                                Point3d p1 = puntosOrdenados[s];
+                                Point3d p2 = puntosOrdenados[s + 1];
+                                double segmentLength = p1.DistanceTo(p2);
+                                
+                                int numLargos = (int)Math.Floor(segmentLength / LONGITUD_LARGA);
+                                int numCortos = (int)Math.Floor((segmentLength - (numLargos * LONGITUD_LARGA)) / LONGITUD_CORTA);
+
+                                // Si el segmento es útil (cabe al menos un tracker), lo dibujamos
+                                if (numLargos > 0 || numCortos > 0)
+                                {
+                                    // Creamos una línea para este segmento válido
+                                    Line segmentoValido = new Line(p1, p2);
+                                    segmentoValido.LayerId = layoutLayerId;
+                                    btr.AppendEntity(segmentoValido);
+                                    tr.AddNewlyCreatedDBObject(segmentoValido, true);
+                                }
+                            }
+                        }
+                        intersectionPoints.Dispose(); 
+                        ejeVertical.Dispose(); 
+                    }
+                    
+                    tr.Commit();
+                } // Fin de la transacción de dibujado
+                
+                ed.WriteMessage("\n¡Layout Ganador dibujado con éxito en la capa 'LAYOUT_GANADOR'!");
+            }
+            catch (System.Exception ex)
+            {
+                 ed.WriteMessage($"\n¡Error Inesperado durante el Dibujado del Layout! {ex.Message} {ex.StackTrace}");
             }
             
             // Liberamos la región del mapa válido de la memoria
