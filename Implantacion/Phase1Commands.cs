@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v39 - Corrección .ParameterOf) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v40 - Corrección de Typo) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -342,21 +342,13 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- FUNCIÓN 'IsPointInsidePoly' (v39 - CORREGIDA) ---
-        /// <summary>
-        /// Algoritmo Ray-Casting que respeta el OCS/WCS.
-        /// </summary>
+        // --- 'IsPointInsidePoly' (Sin cambios, v39) ---
         private static bool IsPointInsidePoly(Polyline poly, Point3d testPointWCS)
         {
             try
             {
-                // 1. Crear el plano de la polilínea
                 Plane polyPlane = new Plane(poly.StartPoint, poly.Normal);
-
-                // --- CORRECCIÓN v39 ---
-                // 2. Proyectar el punto WCS al plano OCS de la polilínea
                 Point2d testPointOCS = polyPlane.ParameterOf(testPointWCS);
-                // --- FIN DE LA CORRECCIÓN ---
 
                 int crossings = 0;
                 for (int i = 0; i < poly.NumberOfVertices; i++)
@@ -425,13 +417,15 @@ namespace Civil3D_Phase1
             return rect;
         }
         
-        // --- 'DrawFinalLayout' (Sin cambios) ---
+        // --- 'DrawFinalLayout' (v40 - CORREGIDA) ---
         private static void DrawFinalLayout(Database db, LayoutResult winningLayout)
         {
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord btr = (BlockBlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                
+                // --- CORRECCIÓN v40: El typo estaba aquí ---
+                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
