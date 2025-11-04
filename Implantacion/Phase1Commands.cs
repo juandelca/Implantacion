@@ -8,7 +8,6 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// NO SE NECESITAN LIBRERÍAS EXTRA
 
 namespace Civil3D_Phase1
 {
@@ -47,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v35 - Optimización por Ray-Casting) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v36 - Creación de Capas Corregida) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -108,7 +107,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
 
 
-            // --- PASO 4: Cálculo de Área Neta (Simplificado) ---
+            // --- PASO 4: Cálculo de Área Neta (Sin cambios) ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
             
             // 4a. Calcular Retranqueo (Setback)
@@ -116,14 +115,23 @@ namespace Civil3D_Phase1
             if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo). Cancelando."); return; }
             ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada en 'AREA_NETA'!");
             
-            // --- LÓGICA DE RESTA BOOLEANA ELIMINADA ---
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Bucle de Optimización (v35) ---
+            // --- PASO 5: Bucle de Optimización (v36) ---
+            
+            // --- CORRECCIÓN v36: Crear capas ANTES del bucle ---
+            ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                CreateLayer(db, tr, "TRACKERS_LARGOS", Color.FromRgb(0, 100, 255)); // Azul
+                CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0)); // Naranja
+                tr.Commit();
+            }
+            // --- FIN DE LA CORRECCIÓN ---
+
             ed.WriteMessage("\n--- Iniciando Paso 5: Bucle de Optimización (100 iteraciones) ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN ---
             LayoutResult winningLayout = RunOptimizationLoop_v35(db, netAreaId, affectionIds, selectedTracker, pitchEjeAEje);
             
             if (winningLayout == null)
@@ -146,7 +154,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"Trackers Cortos ({selectedTracker.longitud_corto}m): {winningLayout.ShortTrackers}");
 
 
-            // --- PASO 6: Dibujado Final (Sin cambios) ---
+            // --- PASO 6: Dibujado Final ---
             ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout Ganador ---");
             DrawFinalLayout(db, winningLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito en capas 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'!");
@@ -240,12 +248,7 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIONES DE REGIÓN ELIMINADAS ---
-        // (SubtractAffections_v30)
-        // (ConvertCurveToRegion)
-
-
-        // --- FUNCIÓN 'RunOptimizationLoop' (v35 - REESCRITA) ---
+        // --- FUNCIÓN 'RunOptimizationLoop_v35' (Sin cambios) ---
         private static LayoutResult RunOptimizationLoop_v35(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchNS)
         {
             LayoutResult bestLayout = new LayoutResult { TotalTrackers = 0 };
@@ -327,10 +330,7 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- FUNCIÓN 'IsPointInsideRegions' REEMPLAZADA POR 'IsPointValid' (v35) ---
-        /// <summary>
-        /// Comprueba si un punto es válido (Dentro de Área Neta Y Fuera de Afecciones)
-        /// </summary>
+        // --- 'IsPointValid' (Sin cambios) ---
         private static bool IsPointValid(Polyline netArea, List<Polyline> affections, Point3d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
@@ -351,9 +351,7 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        /// <summary>
-        /// Algoritmo Ray-Casting para comprobar si un punto 2D está en una Polilínea 2D.
-        /// </summary>
+        // --- 'IsPointInsidePoly' (Sin cambios) ---
         private static bool IsPointInsidePoly(Polyline poly, Point3d testPoint)
         {
             int crossings = 0;
@@ -391,20 +389,25 @@ namespace Civil3D_Phase1
             return rect;
         }
         
-        // --- DrawFinalLayout (sin cambios) ---
+        // --- DrawFinalLayout (v36 - CORREGIDA) ---
         private static void DrawFinalLayout(Database db, LayoutResult winningLayout)
         {
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                CreateLayer(db, tr, "TRACKERS_LARGOS", Color.FromRgb(0, 100, 255));
-                CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0)); 
+                
+                // --- CORRECCIÓN v36: Capas ELIMINADAS de aquí ---
+                // (Ya se crearon en el Paso 5)
+
+                // Dibujar cada tracker del layout ganador
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
+                    // Añadimos la polilínea (que ya tiene capa) al ModelSpace
                     btr.AppendEntity(trackerPoly);
                     tr.AddNewlyCreatedDBObject(trackerPoly, true);
                 }
+
                 tr.Commit();
             }
         }
