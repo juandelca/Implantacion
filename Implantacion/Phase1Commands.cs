@@ -64,8 +64,7 @@ namespace Civil3D_Phase1
 
 
             // --- PASO 2: Solicitar Inputs de Layout (Sin cambios) ---
-
-            // 2a. Seleccionar Tracker
+            // (Se omiten por brevedad, son idénticos a v62)
             PromptKeywordOptions pkoTracker = new PromptKeywordOptions("\nSeleccione el id_tracker de la biblioteca:");
             foreach (var tracker in trackerLibrary) { pkoTracker.Keywords.Add(tracker.id_tracker); }
             pkoTracker.Keywords.Default = trackerLibrary[0].id_tracker;
@@ -74,24 +73,18 @@ namespace Civil3D_Phase1
             string selectedTrackerId = prTracker.StringResult;
             TrackerModel selectedTracker = trackerLibrary.Find(t => t.id_tracker == selectedTrackerId);
             ed.WriteMessage($"\nTracker '{selectedTracker.id_tracker}' seleccionado.");
-
-            // 2b. Pedir Pitch Eje-a-Eje (E-O)
             PromptDoubleOptions pdoPitch = new PromptDoubleOptions("\nIntroduzca el Pitch Eje-a-Eje (E-O) en metros:");
             pdoPitch.AllowNegative = false; pdoPitch.AllowZero = false; pdoPitch.DefaultValue = 10.0;
             PromptDoubleResult prPitch = ed.GetDouble(pdoPitch);
             if (prPitch.Status != PromptStatus.OK) { return; }
             double pitchEO = prPitch.Value;
             ed.WriteMessage($"\nPitch E-O seleccionado: {pitchEO}m");
-
-            // 2c. Pedir Offset N-S
             PromptDoubleOptions pdoOffsetNS = new PromptDoubleOptions("\nIntroduzca el Offset (distancia libre N-S) en metros:");
             pdoOffsetNS.AllowNegative = false; pdoOffsetNS.AllowZero = true; pdoOffsetNS.DefaultValue = 0.5;
             PromptDoubleResult prOffsetNS = ed.GetDouble(pdoOffsetNS);
             if (prOffsetNS.Status != PromptStatus.OK) { return; }
             double pasoLibreNS = prOffsetNS.Value;
             ed.WriteMessage($"\nOffset N-S seleccionado: {pasoLibreNS}m");
-
-            // 2d. Pedir Retranqueo (Setback)
             PromptDoubleOptions pdoSetback = new PromptDoubleOptions("\nIntroduzca el retranqueo (setback) de la parcela en metros:");
             pdoSetback.AllowNegative = false; pdoSetback.AllowZero = true; pdoSetback.DefaultValue = 5.0;
             PromptDoubleResult prSetback = ed.GetDouble(pdoSetback);
@@ -99,22 +92,18 @@ namespace Civil3D_Phase1
             double setback = prSetback.Value;
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
-
             // --- PASO 3: Selección de Geometría (Sin cambios) ---
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (CERRADA):", true);
             if (parcelId == ObjectId.Null) { return; }
             ed.WriteMessage("\nParcela cerrada seleccionada.");
-
             ObjectIdCollection affectionIds = SelectMultiplePolylines(db, ed, "\nSeleccione las Polilíneas de Afecciones (CERRADAS):");
             ed.WriteMessage($"\n{affectionIds.Count} afecciones CERRADAS seleccionadas.");
-
 
             // --- PASO 4: Cálculo de Área Neta (Sin cambios) ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
             ObjectId netAreaId = GetNetArea(db, parcelId, setback);
             if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo)."); return; }
             ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
-
 
             // --- PASO 5: Generación de Layout (MODIFICADO v64) ---
             ed.WriteMessage("\nCreando capas de salida...");
@@ -124,23 +113,10 @@ namespace Civil3D_Phase1
                 CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0));
                 tr.Commit();
             }
-
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Region v64) ---");
-
             LayoutResult finalLayout = RunLayout_v64(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
-
-            if (finalLayout == null)
-            {
-                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v64).");
-                return;
-            }
-
-            if (finalLayout.TotalTrackers == 0)
-            {
-                ed.WriteMessage("\nAVISO: No caben trackers en el área válida.");
-                return;
-            }
-
+            if (finalLayout == null) { ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v64)."); return; }
+            if (finalLayout.TotalTrackers == 0) { ed.WriteMessage("\nAVISO: No caben trackers en el área válida."); return; }
             ed.WriteMessage("--- Generación de Layout Terminada ---");
             ed.WriteMessage("\n--- LAYOUT FINAL GENERADO ---");
             ed.WriteMessage($"Offset (N-S): {finalLayout.OffsetNS:F2}m");
@@ -148,12 +124,10 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"Trackers Largos ({selectedTracker.longitud_largo}m): {finalLayout.LongTrackers}");
             ed.WriteMessage($"Trackers Cortos ({selectedTracker.longitud_corto}m): {finalLayout.ShortTrackers}");
 
-
             // --- PASO 6: Dibujado Final (Sin cambios) ---
             ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout ---");
             DrawFinalLayout(db, finalLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito!");
-
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v64) ---");
         }
 
@@ -165,7 +139,6 @@ namespace Civil3D_Phase1
             peo.AddAllowedClass(typeof(Polyline), true);
             peo.AddAllowedClass(typeof(Polyline2d), true);
             peo.AddAllowedClass(typeof(Circle), true); 
-
             PromptEntityResult per = ed.GetEntity(peo);
             if (per.Status == PromptStatus.OK)
             {
@@ -206,7 +179,6 @@ namespace Civil3D_Phase1
             };
             SelectionFilter selFilter = new SelectionFilter(filter);
             PromptSelectionResult psr = ed.GetSelection(pso, selFilter);
-
             if (psr.Status == PromptStatus.OK)
             {
                 int openCount = 0;
@@ -215,21 +187,12 @@ namespace Civil3D_Phase1
                     foreach (ObjectId id in psr.Value.GetObjectIds())
                     {
                         Curve curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
-                        if (curve != null && curve.Closed)
-                        {
-                            finalCollection.Add(id);
-                        }
-                        else
-                        {
-                            openCount++;
-                        }
+                        if (curve != null && curve.Closed) { finalCollection.Add(id); }
+                        else { openCount++; }
                     }
                     tr.Commit();
                 }
-                if (openCount > 0)
-                {
-                    ed.WriteMessage($"\n(Se ignoraron {openCount} polilíneas que no estaban cerradas.)");
-                }
+                if (openCount > 0) { ed.WriteMessage($"\n(Se ignoraron {openCount} polilíneas que no estaban cerradas.)"); }
             }
             return finalCollection;
         }
@@ -300,12 +263,7 @@ namespace Civil3D_Phase1
         // --- 'RunLayout_v64' (Método 'Region' API 2024) ---
         private static LayoutResult RunLayout_v64(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
-            LayoutResult layout = new LayoutResult
-            {
-                OffsetNS = offsetNS,
-                TrackersToDraw = new List<Polyline>()
-            };
-
+            LayoutResult layout = new LayoutResult { OffsetNS = offsetNS, TrackersToDraw = new List<Polyline>() };
             Region validityRegion = null;
             Extents3d totalExtents;
 
@@ -331,18 +289,14 @@ namespace Civil3D_Phase1
                     {
                         Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
                         if (affCurve == null) continue;
-
                         DBObjectCollection affCurveColl = new DBObjectCollection();
                         affCurveColl.Add(affCurve);
-                        
                         DBObjectCollection affRegionColl = Region.CreateFromCurves(affCurveColl);
                         if (affRegionColl.Count > 0)
                         {
                             Region affRegion = affRegionColl[0] as Region;
-                            
                             // --- API MODERNA (2024) ---
                             validityRegion.BooleanOperation(BooleanOperationType.Subtract, affRegion);
-                            
                             affRegion.Dispose();
                         }
                     }
