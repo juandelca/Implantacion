@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v63 - 'Hatch' API Antigua Corregida) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v64 - Método 'Region' API 2024) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -116,7 +116,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v63) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v64) ---
             ed.WriteMessage("\nCreando capas de salida...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -125,13 +125,13 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Hatch v63) ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Region v64) ---");
 
-            LayoutResult finalLayout = RunLayout_v63(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            LayoutResult finalLayout = RunLayout_v64(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
             {
-                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v63).");
+                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v64).");
                 return;
             }
 
@@ -154,7 +154,7 @@ namespace Civil3D_Phase1
             DrawFinalLayout(db, finalLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito!");
 
-            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v63) ---");
+            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v64) ---");
         }
 
         // --- Función Auxiliar 1 (SelectPolyline, v56) ---
@@ -297,8 +297,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v63' (MODIFICADO v63) ---
-        private static LayoutResult RunLayout_v63(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v64' (Método 'Region' API 2024) ---
+        private static LayoutResult RunLayout_v64(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
             {
@@ -306,54 +306,78 @@ namespace Civil3D_Phase1
                 TrackersToDraw = new List<Polyline>()
             };
 
-            Hatch validityHatch = new Hatch();
-            Transaction tr = db.TransactionManager.StartTransaction();
+            Region validityRegion = null;
             Extents3d totalExtents;
-            
+
+            // --- 1. CREAR EL MAPA DE VALIDEZ (REGION) ---
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // 1a. Crear la Región base desde el Área Neta
+                    Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
+                    if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); tr.Abort(); return null; }
+                    totalExtents = netAreaCurve.GeometricExtents;
+                    
+                    DBObjectCollection netCurveColl = new DBObjectCollection();
+                    netCurveColl.Add(netAreaCurve);
+                    
+                    DBObjectCollection regionColl = Region.CreateFromCurves(netCurveColl);
+                    if (regionColl.Count == 0) { ed.WriteMessage("\nERROR: No se pudo crear la Región del Área Neta."); tr.Abort(); return null; }
+                    validityRegion = regionColl[0] as Region;
+                    
+                    // 1b. Restar (Subtract) todas las afecciones
+                    foreach (ObjectId affId in affectionIds)
+                    {
+                        Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
+                        if (affCurve == null) continue;
+
+                        DBObjectCollection affCurveColl = new DBObjectCollection();
+                        affCurveColl.Add(affCurve);
+                        
+                        DBObjectCollection affRegionColl = Region.CreateFromCurves(affCurveColl);
+                        if (affRegionColl.Count > 0)
+                        {
+                            Region affRegion = affRegionColl[0] as Region;
+                            
+                            // --- API MODERNA (2024) ---
+                            validityRegion.BooleanOperation(BooleanOperationType.Subtract, affRegion);
+                            
+                            affRegion.Dispose();
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\nERROR CRÍTICO al crear Regiones (v64): {ex.Message}");
+                    if (validityRegion != null) validityRegion.Dispose();
+                    tr.Abort(); 
+                    return null; 
+                }
+                tr.Abort(); // No queremos guardar las regiones, solo usarlas
+            } // La transacción se cierra y se Aborta aquí
+
+
+            // --- 2. ITERAR LA GRILLA (usando la Región) ---
+            if (validityRegion == null || validityRegion.IsDisposed)
+            {
+                ed.WriteMessage("\nERROR: La Región de Validez es nula. Cancelando.");
+                return null;
+            }
+
             try
             {
-                // --- 1. CREAR EL MAPA DE VALIDEZ (HATCH) ---
-                
-                // 1a. Configurar el Hatch
-                validityHatch.SetDatabaseDefaults();
-                
-                // --- CAMBIO v58 (Arreglo de v56 Error 1) ---
-                // 'PatternName' es read-only. Se usa 'SetHatchPattern'.
-                validityHatch.SetHatchPattern(HatchPatternType.PreDefined, "SOLID");
-                
-                validityHatch.HatchStyle = HatchStyle.Normal; // Detectar islas
-                validityHatch.Normal = new Vector3d(0, 0, 1); // Plano XY
-
-                // 1b. Añadir el contorno exterior (Área Neta)
-                Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
-                if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); tr.Abort(); validityHatch.Dispose(); return null; }
-                totalExtents = netAreaCurve.GeometricExtents;
-                
-                ObjectIdCollection outerLoop = new ObjectIdCollection();
-                outerLoop.Add(netAreaId);
-                validityHatch.AppendLoop(HatchLoopTypes.External, outerLoop);
-
-                // 1c. Añadir TODAS las afecciones (islas)
-                if (affectionIds.Count > 0)
-                {
-                    validityHatch.AppendLoop(HatchLoopTypes.Default, affectionIds);
-                }
-
-                // 1d. Calcular el sombreado (con sus islas) en memoria
-                validityHatch.EvaluateHatch(true);
-                
-
-                // --- 2. ITERAR LA GRILLA (usando el Hatch) ---
-                
+                // Bucle E-O (X) - Filas
                 for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
                 {
+                    // Bucle N-S (Y) - Trackers
                     double y = totalExtents.MinPoint.Y;
                     while (y < totalExtents.MaxPoint.Y)
                     {
                         Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                         
-                        // 4. Test de Colisión NATIVO (v63)
-                        if (IsTrackerValid_4Corners_v63(validityHatch, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                        // 4. Test de Colisión NATIVO (v64)
+                        if (IsTrackerValid_4Corners_v64(validityRegion, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                         {
                             layout.LongTrackers++;
                             layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -361,11 +385,10 @@ namespace Civil3D_Phase1
                         }
                         else
                         {
-                            // 5. Si el largo no cabe, probar corto
                             if (tracker.longitud_corto > 0.01)
                             {
                                 centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                                if (IsTrackerValid_4Corners_v63(validityHatch, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                                if (IsTrackerValid_4Corners_v64(validityRegion, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                                 {
                                     layout.ShortTrackers++;
                                     layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -380,16 +403,15 @@ namespace Civil3D_Phase1
             }
             catch (System.Exception ex)
             {
-                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v63): {ex.Message}");
-                 return null; // El 'finally' se ejecutará
+                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v64): {ex.Message}");
+                 return null;
             }
             finally
             {
-                // --- 3. LIMPIEZA ---
-                tr.Abort();
-                if(validityHatch != null && !validityHatch.IsDisposed)
+                // Limpiar la Región que creamos
+                if(validityRegion != null && !validityRegion.IsDisposed)
                 {
-                    validityHatch.Dispose();
+                    validityRegion.Dispose();
                 }
             }
 
@@ -397,52 +419,31 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v63' (NUEVA FUNCIÓN v63) ---
+        // --- 'IsTrackerValid_4Corners_v64' (NUEVA FUNCIÓN v64) ---
         //
-        // Esta función corrige los errores de compilación de v58
-        // Usando la firma de API ANTIGUA: GetPointContainment(Point2d, out bool, Tolerance)
+        // Esta función usa el método moderno 'Region.Contains()' de la API 2024.
         //
-        private static bool IsTrackerValid_4Corners_v63(Hatch validHatch, Point3d center, double length, double width)
+        private static bool IsTrackerValid_4Corners_v64(Region validRegion, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
             
-            // Puntos 3D
             Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
             Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
             Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
             Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
 
-            Tolerance tol = new Tolerance(1e-6, 1e-6);
+            Tolerance tol = new Tolerance(1e-6, 1e-6); 
 
-            try
-            {
-                //
-                // --- LÓGICA DE COLISIÓN (v63) ---
-                // 'GetPointContainment' necesita Point2d y un 'out bool'.
-                //
-                bool onBoundary; // Variable 'out' requerida por la API antigua
-                
-                PointContainment pc1 = validHatch.GetPointContainment(new Point2d(p1.X, p1.Y), out onBoundary, tol);
-                if (pc1 != PointContainment.Inside) return false;
-                
-                PointContainment pc2 = validHatch.GetPointContainment(new Point2d(p2.X, p2.Y), out onBoundary, tol);
-                if (pc2 != PointContainment.Inside) return false;
+            //
+            // --- API MODERNA (2024) ---
+            //
+            if (!validRegion.Contains(p1, tol)) return false;
+            if (!validRegion.Contains(p2, tol)) return false;
+            if (!validRegion.Contains(p3, tol)) return false;
+            if (!validRegion.Contains(p4, tol)) return false;
 
-                PointContainment pc3 = validHatch.GetPointContainment(new Point2d(p3.X, p3.Y), out onBoundary, tol);
-                if (pc3 != PointContainment.Inside) return false;
-
-                PointContainment pc4 = validHatch.GetPointContainment(new Point2d(p4.X, p4.Y), out onBoundary, tol);
-                if (pc4 != PointContainment.Inside) return false;
-            }
-            catch (System.Exception ex)
-            {
-                // Capturar un error aquí si GetPointContainment falla
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en GetPointContainment (v63): {ex.Message}");
-                return false;
-            }
-
-            return true; // Todas las esquinas están DENTRO
+            return true; // Todas las esquinas están DENTRO de la Región válida
         }
 
 
