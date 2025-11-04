@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v41 - Forzar Polilíneas 2D) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v42 - Corrección Proyección 2D Pura) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -92,7 +92,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (MODIFICADO) ---
+            // --- PASO 3: Selección de Geometría (Sin cambios, v41) ---
             
             // 3a. Seleccionar Parcela
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D):");
@@ -159,39 +159,32 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
         }
 
-        // --- Función Auxiliar 1 (v41 - CORREGIDA) ---
+        // --- Función Auxiliar 1 (Sin cambios, v41) ---
         private static ObjectId SelectPolyline(Editor ed, string message)
         {
             PromptEntityOptions peo = new PromptEntityOptions(message);
             peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea 2D.");
-            peo.AddAllowedClass(typeof(Polyline), true); // Acepta Polyline (LWPOLYLINE)
-            peo.AddAllowedClass(typeof(Polyline2d), true); // Acepta Polyline 2D
-            // --- Polyline3d ELIMINADA ---
-            // peo.AddAllowedClass(typeof(Polyline3d), true); 
-
+            peo.AddAllowedClass(typeof(Polyline), true); 
+            peo.AddAllowedClass(typeof(Polyline2d), true); 
             PromptEntityResult per = ed.GetEntity(peo);
             if (per.Status == PromptStatus.OK) { return per.ObjectId; }
             return ObjectId.Null;
         }
 
-        // --- Función Auxiliar 2 (v41 - CORREGIDA) ---
+        // --- Función Auxiliar 2 (Sin cambios, v41) ---
         private static ObjectIdCollection SelectMultiplePolylines(Editor ed, string message)
         {
             PromptSelectionOptions pso = new PromptSelectionOptions();
             pso.MessageForAdding = message;
             pso.MessageForRemoval = "\nEliminar objetos de la selección:";
-            
-            // --- Polyline3d ELIMINADA DEL FILTRO ---
             TypedValue[] filter = new TypedValue[]
             {
                 new TypedValue((int)DxfCode.Operator, "<OR"),
                 new TypedValue((int)DxfCode.Start, "POLYLINE"),
                 new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
                 new TypedValue((int)DxfCode.Start, "POLYLINE2D"),
-                // new TypedValue((int)DxfCode.Start, "POLYLINE3D"), // <-- ELIMINADA
                 new TypedValue((int)DxfCode.Operator, "OR>")
             };
-
             SelectionFilter selFilter = new SelectionFilter(filter);
             PromptSelectionResult psr = ed.GetSelection(pso, selFilter);
             if (psr.Status == PromptStatus.OK) { return new ObjectIdCollection(psr.Value.GetObjectIds()); }
@@ -358,30 +351,40 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly' (Sin cambios, v39) ---
+        // --- FUNCIÓN 'IsPointInsidePoly' (v42 - CORREGIDA) ---
+        /// <summary>
+        /// Algoritmo Ray-Casting 2D puro, ignorando Z.
+        /// </summary>
         private static bool IsPointInsidePoly(Polyline poly, Point3d testPointWCS)
         {
-            // Esta lógica (v39/v40) es correcta, siempre y cuando
-            // 'poly' sea una Polyline 2D, lo cual ahora forzamos.
+            // Esta versión ignora Z y compara X/Y (WCS) con X/Y (WCS)
+            // Es una proyección "top-down" pura.
+
             try
             {
-                Plane polyPlane = new Plane(poly.StartPoint, poly.Normal);
-                Point2d testPointOCS = polyPlane.ParameterOf(testPointWCS);
-
                 int crossings = 0;
+                
+                // Usamos las coordenadas 2D del punto de prueba (ignorando su Z)
+                double testX = testPointWCS.X;
+                double testY = testPointWCS.Y;
+
                 for (int i = 0; i < poly.NumberOfVertices; i++)
                 {
-                    Point2d p1 = poly.GetPoint2dAt(i);
-                    Point2d p2 = poly.GetPoint2dAt((i + 1) % poly.NumberOfVertices); 
+                    // Obtenemos los vértices 3D (WCS) de la polilínea
+                    Point3d p1_3d = poly.GetPoint3dAt(i);
+                    Point3d p2_3d = poly.GetPoint3dAt((i + 1) % poly.NumberOfVertices); 
 
-                    double testX = testPointOCS.X;
-                    double testY = testPointOCS.Y;
+                    // Usamos solo sus coordenadas X e Y
+                    double p1_X = p1_3d.X;
+                    double p1_Y = p1_3d.Y;
+                    double p2_X = p2_3d.X;
+                    double p2_Y = p2_3d.Y;
 
-                    if (((p1.Y <= testY && p2.Y > testY) || (p1.Y > testY && p2.Y <= testY)))
+                    if (((p1_Y <= testY && p2_Y > testY) || (p1_Y > testY && p2_Y <= testY)))
                     {
-                        if (p2.Y - p1.Y == 0) continue; 
+                        if (p2_Y - p1_Y == 0) continue; 
                         
-                        double x_intercept = (p2.X - p1.X) * (testY - p1.Y) / (p2.Y - p1.Y) + p1.X;
+                        double x_intercept = (p2_X - p1_X) * (testY - p1_Y) / (p2_Y - p1_Y) + p1_X;
                         if (testX < x_intercept)
                         {
                             crossings++;
@@ -390,8 +393,10 @@ namespace Civil3D_Phase1
                 }
                 return (crossings % 2 == 1); // Impar = Dentro
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
+                // Escribir el error en la línea de comandos para depuración
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en IsPointInsidePoly: {ex.Message}");
                 return false; 
             }
         }
@@ -441,7 +446,7 @@ namespace Civil3D_Phase1
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                BlockTableRecord btr = (BlockBlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
