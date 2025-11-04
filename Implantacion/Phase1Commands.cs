@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v38 - Corrección OCS/WCS) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v39 - Corrección .ParameterOf) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -330,15 +330,19 @@ namespace Civil3D_Phase1
         // --- 'IsPointValid' (Sin cambios) ---
         private static bool IsPointValid(Polyline netArea, List<Polyline> affections, Point3d testPoint)
         {
+            // Condición 1: Debe estar DENTRO del área neta
             if (!IsPointInsidePoly(netArea, testPoint)) { return false; }
+            
+            // Condición 2: NO debe estar dentro de NINGUNA afección
             foreach (Polyline affPoly in affections)
             {
                 if (IsPointInsidePoly(affPoly, testPoint)) { return false; }
             }
-            return true;
+            
+            return true; // Pasó ambas pruebas
         }
         
-        // --- FUNCIÓN 'IsPointInsidePoly' (v38 - CORREGIDA) ---
+        // --- FUNCIÓN 'IsPointInsidePoly' (v39 - CORREGIDA) ---
         /// <summary>
         /// Algoritmo Ray-Casting que respeta el OCS/WCS.
         /// </summary>
@@ -346,12 +350,13 @@ namespace Civil3D_Phase1
         {
             try
             {
-                // 1. Crear el plano de la polilínea (considerando su normal y elevación)
+                // 1. Crear el plano de la polilínea
                 Plane polyPlane = new Plane(poly.StartPoint, poly.Normal);
 
-                // 2. Proyectar el punto de prueba (WCS) en el plano de la polilínea
-                //    y convertirlo a un punto 2D en el sistema de coordenadas de ese plano (OCS)
-                Point2d testPointOCS = testPointWCS.Convert2d(polyPlane);
+                // --- CORRECCIÓN v39 ---
+                // 2. Proyectar el punto WCS al plano OCS de la polilínea
+                Point2d testPointOCS = polyPlane.ParameterOf(testPointWCS);
+                // --- FIN DE LA CORRECCIÓN ---
 
                 int crossings = 0;
                 for (int i = 0; i < poly.NumberOfVertices; i++)
@@ -377,7 +382,6 @@ namespace Civil3D_Phase1
             }
             catch (System.Exception)
             {
-                // Si falla la conversión de plano (p.ej. polilínea 3D compleja), asumir que está fuera.
                 return false; 
             }
         }
@@ -398,7 +402,7 @@ namespace Civil3D_Phase1
             if (!IsPointValid(netArea, affections, p3)) return false;
             if (!IsPointValid(netArea, affections, p4)) return false;
 
-            return true;
+            return true; // Todas las esquinas están bien
         }
 
 
@@ -427,7 +431,7 @@ namespace Civil3D_Phase1
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                BlockTableRecord btr = (BlockBlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
