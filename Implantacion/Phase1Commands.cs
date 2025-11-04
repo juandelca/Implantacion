@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v48 - API Antigua Compatible 'GetPointAtDist') ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v53 - Corregido Fallback de Teselación) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -145,9 +145,8 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
 
-            // El nombre de la función 'RunLayout_v47' se mantiene, pero llama
-            // internamente a la nueva lógica de teselado v48.
-            LayoutResult finalLayout = RunLayout_v47(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            // --- CAMBIO v53: Llamada a la nueva función de Layout ---
+            LayoutResult finalLayout = RunLayout_v53(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
             {
@@ -315,8 +314,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v47' (Sin cambios en la llamada, pero usa la nueva v48) ---
-        private static LayoutResult RunLayout_v47(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v53' (NUEVA v53) ---
+        private static LayoutResult RunLayout_v53(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
             {
@@ -335,16 +334,16 @@ namespace Civil3D_Phase1
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
 
-                // --- LLAMA A LA NUEVA LÓGICA v48 ---
-                netAreaVertices = GetTessellatedVertices_v48_Compatible(netAreaCurve);
+                // --- LLAMA A LA NUEVA LÓGICA v53 ---
+                netAreaVertices = GetTessellatedVertices_v53(netAreaCurve);
 
                 foreach (ObjectId id in affectionIds)
                 {
                     Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                     if (affCurve != null)
                     {
-                        // --- LLAMA A LA NUEVA LÓGICA v48 ---
-                        affectionVerticesList.Add(GetTessellatedVertices_v48_Compatible(affCurve));
+                        // --- LLAMA A LA NUEVA LÓGICA v53 ---
+                        affectionVerticesList.Add(GetTessellatedVertices_v53(affCurve));
                     }
                 }
                 tr.Abort();
@@ -382,9 +381,9 @@ namespace Civil3D_Phase1
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
                                 y += tracker.longitud_corto + offsetNS; // <-- USA EL OFFSET FIJO
                             }
-                            else { y += 1.0; }
+                            else { y += 1.0; } // Avanza un poco para evitar bucles infinitos
                         }
-                        else { y += 1.0; }
+                        else { y += 1.0; } // Avanza un poco para evitar bucles infinitos
                     }
                 }
             }
@@ -417,12 +416,12 @@ namespace Civil3D_Phase1
         private static bool IsPointValid_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInsidePoly_v45(netArea, testPoint)) { return false; }
+            if (netArea.Count == 0 || !IsPointInsidePoly_v45(netArea, testPoint)) { return false; }
 
             // Condición 2: NO debe estar dentro de NINGUNA afección
             foreach (List<Point2d> affPoly in affections)
             {
-                if (IsPointInsidePoly_v45(affPoly, testPoint)) { return false; }
+                if (affPoly.Count > 0 && IsPointInsidePoly_v45(affPoly, testPoint)) { return false; }
             }
 
             return true; // Pasó ambas pruebas
@@ -468,14 +467,14 @@ namespace Civil3D_Phase1
             }
         }
 
-        // --- 'GetTessellatedVertices_v48_Compatible' (NUEVA v48) ---
+        // --- 'GetTessellatedVertices_v53' (MODIFICADA v53) ---
         //
-        // REEMPLAZO COMPLETO DE LA FUNCIÓN QUE FALLABA (GetSamplePoints)
+        // ESTA ES LA FUNCIÓN CORREGIDA
+        // Se ha eliminado el 'catch' que contenía el 'fallback' erróneo (v46).
+        // Ahora, si 'GetPointAtDist' falla, simplemente devolverá una lista vacía,
+        // lo que es más seguro que devolver datos incorrectos.
         //
-        // Esta versión usa 'GetPointAtDist' para ser compatible con
-        // versiones antiguas de la API de Civil 3D (anteriores a 2022).
-        //
-        private static List<Point2d> GetTessellatedVertices_v48_Compatible(Curve curve)
+        private static List<Point2d> GetTessellatedVertices_v53(Curve curve)
         {
             List<Point2d> vertices = new List<Point2d>();
             if (curve == null) return vertices;
@@ -486,8 +485,7 @@ namespace Civil3D_Phase1
                 const double TESSELLATION_DISTANCE = 0.5; // 0.5m de precisión
 
                 // GetDistanceAtParameter y GetPointAtDist son los métodos compatibles
-                // Nota: Usamos GetEndParam() para asegurarnos de que funcione con Polilíneas 2D
-                double totalLength = curve.GetDistanceAtParameter(curve.EndParam); 
+                double totalLength = curve.GetDistanceAtParameter(curve.EndParam);
                 double currentDistance = 0;
 
                 while (currentDistance < totalLength)
@@ -503,35 +501,12 @@ namespace Civil3D_Phase1
             }
             catch (System.Exception ex)
             {
-                // Si GetPointAtDist falla (quizás con una polilínea 2D antigua),
-                // usamos el método original de solo vértices como 'fallback'.
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError al teselar curva (v48): {ex.Message}. Usando fallback de solo vértices.");
-                
-                vertices.Clear(); // Limpiamos la lista por si falló a medias
-
-                if (curve is Polyline poly) // LWPOLYLINE
-                {
-                    for (int i = 0; i < poly.NumberOfVertices; i++)
-                    {
-                        vertices.Add(poly.GetPoint2dAt(i));
-                    }
-                }
-                else if (curve is Polyline2d poly2d) // POLYLINE2D (pesada)
-                {
-                    // Necesitamos una transacción para leer los vértices de una Polyline2d
-                    using (Transaction tr = curve.Database.TransactionManager.StartTransaction())
-                    {
-                        foreach (ObjectId vertexId in poly2d)
-                        {
-                            if (!vertexId.IsErased)
-                            {
-                                Vertex2d vertex = (Vertex2d)tr.GetObject(vertexId, OpenMode.ForRead);
-                                vertices.Add(new Point2d(vertex.Position.X, vertex.Position.Y));
-                            }
-                        }
-                        tr.Commit(); // Solo lectura, así que Commit está bien
-                    }
-                }
+                // ¡NO USAR FALLBACK! El fallback era el bug.
+                // Si la teselación falla, es mejor fallar (devolver lista vacía)
+                // que dar un resultado incorrecto.
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\n¡ERROR CRÍTICO al teselar curva (v53)!: {ex.Message}.");
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nLa geometría con ID {curve.ObjectId} no se pudo procesar. El layout puede ser incorrecto.");
+                vertices.Clear(); // Devuelve una lista vacía para que la colisión falle
             }
 
             // Asegurarnos de que el polígono esté "cerrado" para el algoritmo de Ray-Casting
@@ -576,6 +551,7 @@ namespace Civil3D_Phase1
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
+                
                 {
                     btr.AppendEntity(trackerPoly);
                     tr.AddNewlyCreatedDBObject(trackerPoly, true);
