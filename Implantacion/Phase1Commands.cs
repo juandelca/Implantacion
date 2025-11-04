@@ -8,7 +8,7 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// --- LIBRERÍAS CORREGIDAS PARA v51 ---
+// --- LIBRERÍAS CORREGIDAS PARA v52 ---
 using Autodesk.AutoCAD.GraphicsInterface; // (Necesaria para Polyline del Hatch, aunque ahora la evitamos)
 using Autodesk.AutoCAD.BoundaryRepresentation; // <-- ¡La librería clave que faltaba!
 using AcRx = Autodesk.AutoCAD.Runtime; // <-- Alias para evitar conflictos de 'Exception'
@@ -51,7 +51,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v51 - Colisión por Brep) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v52 - Colisión por Brep) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -130,7 +130,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v51) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v52) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -142,8 +142,8 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método Brep) ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN v51 ---
-            LayoutResult finalLayout = RunLayout_v51(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            // --- LLAMADA A LA NUEVA FUNCIÓN v52 ---
+            LayoutResult finalLayout = RunLayout_v52(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
             {
@@ -311,8 +311,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunLayout_v51' (MODIFICADA) ---
-        private static LayoutResult RunLayout_v51(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- FUNCIÓN 'RunLayout_v52' (MODIFICADA) ---
+        private static LayoutResult RunLayout_v52(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
             { 
@@ -342,7 +342,7 @@ namespace Civil3D_Phase1
                     Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                     
                     // 4. Test de Colisión (4-ESQUINAS)
-                    if (IsTrackerValid_4Corners_v51(db, netAreaId, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                    if (IsTrackerValid_4Corners_v52(db, netAreaId, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                     {
                         layout.LongTrackers++;
                         layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -354,7 +354,7 @@ namespace Civil3D_Phase1
                         if (tracker.longitud_corto > 0.01)
                         {
                             centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                            if (IsTrackerValid_4Corners_v51(db, netAreaId, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                            if (IsTrackerValid_4Corners_v52(db, netAreaId, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                             {
                                 layout.ShortTrackers++;
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -371,8 +371,8 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- FUNCIÓN 'IsTrackerValid_4Corners_v51' (MODIFICADA) ---
-        private static bool IsTrackerValid_4Corners_v51(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
+        // --- FUNCIÓN 'IsTrackerValid_4Corners_v52' (MODIFICADA) ---
+        private static bool IsTrackerValid_4Corners_v52(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
@@ -385,10 +385,10 @@ namespace Civil3D_Phase1
             // Usamos una única transacción para todas las comprobaciones de este tracker
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                if (!IsPointValid_v51(tr, netAreaId, affections, p1)) { tr.Abort(); return false; }
-                if (!IsPointValid_v51(tr, netAreaId, affections, p2)) { tr.Abort(); return false; }
-                if (!IsPointValid_v51(tr, netAreaId, affections, p3)) { tr.Abort(); return false; }
-                if (!IsPointValid_v51(tr, netAreaId, affections, p4)) { tr.Abort(); return false; }
+                if (!IsPointValid_v52(tr, netAreaId, affections, p1)) { tr.Abort(); return false; }
+                if (!IsPointValid_v52(tr, netAreaId, affections, p2)) { tr.Abort(); return false; }
+                if (!IsPointValid_v52(tr, netAreaId, affections, p3)) { tr.Abort(); return false; }
+                if (!IsPointValid_v52(tr, netAreaId, affections, p4)) { tr.Abort(); return false; }
                 
                 tr.Abort(); // Todo bien, no guardamos nada
             }
@@ -396,26 +396,26 @@ namespace Civil3D_Phase1
             return true; // Todas las esquinas están bien
         }
 
-        // --- FUNCIÓN 'IsPointValid_v51' (MODIFICADA) ---
-        private static bool IsPointValid_v51(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
+        // --- FUNCIÓN 'IsPointValid_v52' (MODIFICADA) ---
+        private static bool IsPointValid_v52(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInside_Brep_v51(tr, netAreaId, testPoint)) { return false; }
+            if (!IsPointInside_Brep_v52(tr, netAreaId, testPoint)) { return false; }
             
             // Condición 2: NO debe estar dentro de NINGUNA afección
             foreach (ObjectId affId in affections)
             {
-                if (IsPointInside_Brep_v51(tr, affId, testPoint)) { return false; }
+                if (IsPointInside_Brep_v52(tr, affId, testPoint)) { return false; }
             }
             
             return true; // Pasó ambas pruebas
         }
         
-        // --- FUNCIÓN 'IsPointInside_Brep_v51' (NUEVA) ---
+        // --- FUNCIÓN 'IsPointInside_Brep_v52' (NUEVA) ---
         /// <summary>
         /// Comprobación de colisión 100% fiable usando Brep.IsPointInside.
         /// </summary>
-        private static bool IsPointInside_Brep_v51(Transaction tr, ObjectId polyId, Point3d testPoint)
+        private static bool IsPointInside_Brep_v52(Transaction tr, ObjectId polyId, Point3d testPoint)
         {
             Region region = null;
             Brep brep = null;
@@ -446,7 +446,7 @@ namespace Civil3D_Phase1
                 if (region != null) region.Dispose();
                 return false;
             }
-            // --- CORRECCIÓN v51: Usar los namespaces correctos ---
+            // --- CORRECCIÓN v52: Usar los namespaces correctos ---
             catch (AcRx.Exception ex)
             {
                 // Si el Brep falla (p.ej. polilínea auto-intersectada), asumir que está "fuera" por seguridad
