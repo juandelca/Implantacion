@@ -25,10 +25,10 @@ namespace Civil3D_Phase1
         public string bloque_cad_corto { get; set; }
     }
 
-    // --- ESTA CLASE SE HA SIMPLIFICADO ---
     public class LayoutResult
     {
-        public double OffsetNS { get; set; } // <-- Nombre cambiado por claridad
+        // ... (Esta clase no cambia) ...
+        public double OffsetNS { get; set; } 
         public int TotalTrackers { get; set; }
         public int LongTrackers { get; set; }
         public int ShortTrackers { get; set; }
@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v44 - Layout Fijo N-S y Colisión Corregida) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v45 - Corrección Vértices WCS) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -63,7 +63,7 @@ namespace Civil3D_Phase1
             catch (System.Exception) { /* ... error ... */ return; }
 
 
-            // --- PASO 2: Solicitar Inputs de Layout (MODIFICADO) ---
+            // --- PASO 2: Solicitar Inputs de Layout (Sin cambios, v44) ---
             
             // 2a. Seleccionar Tracker
             PromptKeywordOptions pkoTracker = new PromptKeywordOptions("\nSeleccione el id_tracker de la biblioteca:");
@@ -83,9 +83,9 @@ namespace Civil3D_Phase1
             double pitchEO = prPitch.Value;
             ed.WriteMessage($"\nPitch E-O seleccionado: {pitchEO}m");
 
-            // --- NUEVO INPUT 2c. Pedir Offset N-S ---
+            // 2c. Pedir Offset N-S
             PromptDoubleOptions pdoOffsetNS = new PromptDoubleOptions("\nIntroduzca el Offset (distancia libre N-S) en metros:");
-            pdoOffsetNS.AllowNegative = false; pdoOffsetNS.AllowZero = true; pdoOffsetNS.DefaultValue = 0.5; // 50cm por defecto
+            pdoOffsetNS.AllowNegative = false; pdoOffsetNS.AllowZero = true; pdoOffsetNS.DefaultValue = 0.5; 
             PromptDoubleResult prOffsetNS = ed.GetDouble(pdoOffsetNS);
             if (prOffsetNS.Status != PromptStatus.OK) { return; }
             double pasoLibreNS = prOffsetNS.Value;
@@ -125,7 +125,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (v44 - SIN OPTIMIZACIÓN) ---
+            // --- PASO 5: Generación de Layout (Sin cambios, v44) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -137,7 +137,6 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN v44 ---
             LayoutResult finalLayout = RunLayout_v44(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
@@ -263,7 +262,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunOptimizationLoop' REEMPLAZADA POR 'RunLayout_v44' ---
+        // --- 'RunLayout_v44' (Sin cambios) ---
+        // (El nombre es v44, pero usa la nueva v45 de Get2DVertices)
         private static LayoutResult RunLayout_v44(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
@@ -282,14 +282,17 @@ namespace Civil3D_Phase1
                 Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
-                netAreaVertices = Get2DVertices(netAreaCurve); // <-- NUEVA FUNCIÓN
+                
+                // --- LLAMANDO A LA NUEVA FUNCIÓN v45 ---
+                netAreaVertices = Get2DVertices_v45(netAreaCurve); 
                 
                 foreach (ObjectId id in affectionIds)
                 {
                     Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                     if (affCurve != null)
                     {
-                        affectionVerticesList.Add(Get2DVertices(affCurve)); // <-- NUEVA FUNCIÓN
+                        // --- LLAMANDO A LA NUEVA FUNCIÓN v45 ---
+                        affectionVerticesList.Add(Get2DVertices_v45(affCurve)); 
                     }
                 }
                 tr.Abort(); 
@@ -338,7 +341,7 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- NUEVA FUNCIÓN 'IsTrackerValid_4Corners_v44' ---
+        // --- 'IsTrackerValid_4Corners_v44' (Sin cambios) ---
         private static bool IsTrackerValid_4Corners_v44(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
@@ -358,7 +361,7 @@ namespace Civil3D_Phase1
             return true; // Todas las esquinas están bien
         }
 
-        // --- NUEVA FUNCIÓN 'IsPointValid_v44' ---
+        // --- 'IsPointValid_v44' (Sin cambios) ---
         private static bool IsPointValid_v44(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
@@ -373,10 +376,7 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- FUNCIÓN 'IsPointInsidePoly' (v44 - REESCRITA) ---
-        /// <summary>
-        /// Algoritmo Ray-Casting 2D puro sobre una lista de vértices 2D.
-        /// </summary>
+        // --- 'IsPointInsidePoly_v44' (Sin cambios) ---
         private static bool IsPointInsidePoly_v44(List<Point2d> vertices, Point2d testPoint)
         {
             try
@@ -415,11 +415,11 @@ namespace Civil3D_Phase1
             }
         }
         
-        // --- NUEVA FUNCIÓN 'Get2DVertices' (v44) ---
+        // --- FUNCIÓN 'Get2DVertices' (v45 - CORREGIDA) ---
         /// <summary>
-        /// Extrae los vértices 2D (X, Y) de una Polyline o Polyline2d, ignorando Z.
+        /// Extrae los vértices 2D (X, Y) de una Polyline o Polyline2d, usando WCS.
         /// </summary>
-        private static List<Point2d> Get2DVertices(Curve curve)
+        private static List<Point2d> Get2DVertices_v45(Curve curve)
         {
             List<Point2d> vertices = new List<Point2d>();
 
@@ -427,16 +427,18 @@ namespace Civil3D_Phase1
             {
                 for (int i = 0; i < poly.NumberOfVertices; i++)
                 {
-                    vertices.Add(poly.GetPoint2dAt(i));
+                    // --- CORRECCIÓN ---
+                    // Obtener el vértice 3D (WCS) y extraer X, Y
+                    Point3d pt3d = poly.GetPoint3dAt(i);
+                    vertices.Add(new Point2d(pt3d.X, pt3d.Y));
                 }
             }
             else if (curve is Polyline2d poly2d) // Es una Polyline 2D
             {
-                // Iterar a través de los vértices de una Polyline2d es más complejo
                 foreach (ObjectId vertexId in poly2d)
                 {
                     Vertex2d vertex = (Vertex2d)vertexId.GetObject(OpenMode.ForRead);
-                    // Proyectamos el punto 3D a un plano XY
+                    // vertex.Position ya es un Point3d (WCS)
                     vertices.Add(new Point2d(vertex.Position.X, vertex.Position.Y));
                 }
             }
