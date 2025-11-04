@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v42 - Corrección Proyección 2D Pura) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v43 - Corrección Typo Final) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -351,10 +351,7 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- FUNCIÓN 'IsPointInsidePoly' (v42 - CORREGIDA) ---
-        /// <summary>
-        /// Algoritmo Ray-Casting 2D puro, ignorando Z.
-        /// </summary>
+        // --- 'IsPointInsidePoly' (v43 - CORREGIDA LA PROYECCIÓN 2D PURA) ---
         private static bool IsPointInsidePoly(Polyline poly, Point3d testPointWCS)
         {
             // Esta versión ignora Z y compara X/Y (WCS) con X/Y (WCS)
@@ -440,13 +437,15 @@ namespace Civil3D_Phase1
             return rect;
         }
         
-        // --- 'DrawFinalLayout' (Sin cambios, v40) ---
+        // --- 'DrawFinalLayout' (v43 - CORREGIDA) ---
         private static void DrawFinalLayout(Database db, LayoutResult winningLayout)
         {
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord btr = (BlockBlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                
+                // --- CORRECCIÓN v43: El typo estaba aquí ---
+                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
