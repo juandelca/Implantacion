@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v40 - Corrección de Typo) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v41 - Forzar Polilíneas 2D) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -92,15 +92,15 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (Sin cambios) ---
+            // --- PASO 3: Selección de Geometría (MODIFICADO) ---
             
             // 3a. Seleccionar Parcela
-            ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela:");
+            ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D):");
             if (parcelId == ObjectId.Null) { return; }
             ed.WriteMessage("\nParcela seleccionada.");
 
             // 3b. Seleccionar Afecciones
-            ObjectIdCollection affectionIds = SelectMultiplePolylines(ed, "\nSeleccione las Polilíneas de Afecciones (o pulse Intro para ninguna):");
+            ObjectIdCollection affectionIds = SelectMultiplePolylines(ed, "\nSeleccione las Polilíneas de Afecciones (Deben ser 2D):");
             ed.WriteMessage($"\n{affectionIds.Count} afecciones seleccionadas.");
 
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
@@ -159,23 +159,39 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
         }
 
-        // --- Función Auxiliar 1 (Sin cambios) ---
+        // --- Función Auxiliar 1 (v41 - CORREGIDA) ---
         private static ObjectId SelectPolyline(Editor ed, string message)
         {
             PromptEntityOptions peo = new PromptEntityOptions(message);
-            peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea.");
-            peo.AddAllowedClass(typeof(Polyline), true); peo.AddAllowedClass(typeof(Polyline2d), true); peo.AddAllowedClass(typeof(Polyline3d), true);
+            peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea 2D.");
+            peo.AddAllowedClass(typeof(Polyline), true); // Acepta Polyline (LWPOLYLINE)
+            peo.AddAllowedClass(typeof(Polyline2d), true); // Acepta Polyline 2D
+            // --- Polyline3d ELIMINADA ---
+            // peo.AddAllowedClass(typeof(Polyline3d), true); 
+
             PromptEntityResult per = ed.GetEntity(peo);
             if (per.Status == PromptStatus.OK) { return per.ObjectId; }
             return ObjectId.Null;
         }
 
-        // --- Función Auxiliar 2 (Sin cambios) ---
+        // --- Función Auxiliar 2 (v41 - CORREGIDA) ---
         private static ObjectIdCollection SelectMultiplePolylines(Editor ed, string message)
         {
             PromptSelectionOptions pso = new PromptSelectionOptions();
-            pso.MessageForAdding = message; pso.MessageForRemoval = "\nEliminar objetos de la selección:";
-            TypedValue[] filter = new TypedValue[] { new TypedValue((int)DxfCode.Operator, "<OR"), new TypedValue((int)DxfCode.Start, "POLYLINE"), new TypedValue((int)DxfCode.Start, "LWPOLYLINE"), new TypedValue((int)DxfCode.Start, "POLYLINE2D"), new TypedValue((int)DxfCode.Start, "POLYLINE3D"), new TypedValue((int)DxfCode.Operator, "OR>") };
+            pso.MessageForAdding = message;
+            pso.MessageForRemoval = "\nEliminar objetos de la selección:";
+            
+            // --- Polyline3d ELIMINADA DEL FILTRO ---
+            TypedValue[] filter = new TypedValue[]
+            {
+                new TypedValue((int)DxfCode.Operator, "<OR"),
+                new TypedValue((int)DxfCode.Start, "POLYLINE"),
+                new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
+                new TypedValue((int)DxfCode.Start, "POLYLINE2D"),
+                // new TypedValue((int)DxfCode.Start, "POLYLINE3D"), // <-- ELIMINADA
+                new TypedValue((int)DxfCode.Operator, "OR>")
+            };
+
             SelectionFilter selFilter = new SelectionFilter(filter);
             PromptSelectionResult psr = ed.GetSelection(pso, selFilter);
             if (psr.Status == PromptStatus.OK) { return new ObjectIdCollection(psr.Value.GetObjectIds()); }
@@ -345,6 +361,8 @@ namespace Civil3D_Phase1
         // --- 'IsPointInsidePoly' (Sin cambios, v39) ---
         private static bool IsPointInsidePoly(Polyline poly, Point3d testPointWCS)
         {
+            // Esta lógica (v39/v40) es correcta, siempre y cuando
+            // 'poly' sea una Polyline 2D, lo cual ahora forzamos.
             try
             {
                 Plane polyPlane = new Plane(poly.StartPoint, poly.Normal);
@@ -417,14 +435,12 @@ namespace Civil3D_Phase1
             return rect;
         }
         
-        // --- 'DrawFinalLayout' (v40 - CORREGIDA) ---
+        // --- 'DrawFinalLayout' (Sin cambios, v40) ---
         private static void DrawFinalLayout(Database db, LayoutResult winningLayout)
         {
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                
-                // --- CORRECCIÓN v40: El typo estaba aquí ---
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
