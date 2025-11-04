@@ -137,7 +137,8 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
             
-            LayoutResult finalLayout = RunLayout_v44(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            // --- LLAMADA A LA NUEVA FUNCIÓN v45 ---
+            LayoutResult finalLayout = RunLayout_v45(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
             {
@@ -262,9 +263,9 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v44' (Sin cambios) ---
-        // (El nombre es v44, pero usa la nueva v45 de Get2DVertices)
-        private static LayoutResult RunLayout_v44(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- FUNCIÓN 'RunLayout' (v45 - CORREGIDA) ---
+        // (El nombre es v45, pero llama a las funciones v45)
+        private static LayoutResult RunLayout_v45(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
             { 
@@ -312,7 +313,7 @@ namespace Civil3D_Phase1
                     Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                     
                     // 4. Test de Colisión (4-ESQUINAS)
-                    if (IsTrackerValid_4Corners_v44(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                    if (IsTrackerValid_4Corners_v45(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                     {
                         layout.LongTrackers++;
                         layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -324,7 +325,7 @@ namespace Civil3D_Phase1
                         if (tracker.longitud_corto > 0.01)
                         {
                             centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                            if (IsTrackerValid_4Corners_v44(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                            if (IsTrackerValid_4Corners_v45(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                             {
                                 layout.ShortTrackers++;
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -341,8 +342,8 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v44' (Sin cambios) ---
-        private static bool IsTrackerValid_4Corners_v44(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
+        // --- 'IsTrackerValid_4Corners_v45' (CORREGIDA) ---
+        private static bool IsTrackerValid_4Corners_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
@@ -353,31 +354,34 @@ namespace Civil3D_Phase1
             Point2d p3 = new Point2d(center.X + halfWid, center.Y + halfLen); // Arriba-Derecha
             Point2d p4 = new Point2d(center.X - halfWid, center.Y + halfLen); // Arriba-Izquierda
 
-            if (!IsPointValid_v44(netArea, affections, p1)) return false;
-            if (!IsPointValid_v44(netArea, affections, p2)) return false;
-            if (!IsPointValid_v44(netArea, affections, p3)) return false;
-            if (!IsPointValid_v44(netArea, affections, p4)) return false;
+            if (!IsPointValid_v45(netArea, affections, p1)) return false;
+            if (!IsPointValid_v45(netArea, affections, p2)) return false;
+            if (!IsPointValid_v45(netArea, affections, p3)) return false;
+            if (!IsPointValid_v45(netArea, affections, p4)) return false;
 
             return true; // Todas las esquinas están bien
         }
 
-        // --- 'IsPointValid_v44' (Sin cambios) ---
-        private static bool IsPointValid_v44(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
+        // --- 'IsPointValid_v45' (CORREGIDA) ---
+        private static bool IsPointValid_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInsidePoly_v44(netArea, testPoint)) { return false; }
+            if (!IsPointInsidePoly_v45(netArea, testPoint)) { return false; }
             
             // Condición 2: NO debe estar dentro de NINGUNA afección
             foreach (List<Point2d> affPoly in affections)
             {
-                if (IsPointInsidePoly_v44(affPoly, testPoint)) { return false; }
+                if (IsPointInsidePoly_v45(affPoly, testPoint)) { return false; }
             }
             
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly_v44' (Sin cambios) ---
-        private static bool IsPointInsidePoly_v44(List<Point2d> vertices, Point2d testPoint)
+        // --- 'IsPointInsidePoly_v45' (CORREGIDA) ---
+        /// <summary>
+        /// Algoritmo Ray-Casting 2D puro sobre una lista de vértices 2D.
+        /// </summary>
+        private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
         {
             try
             {
@@ -410,7 +414,7 @@ namespace Civil3D_Phase1
             }
             catch (System.Exception ex)
             {
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en IsPointInsidePoly_v44: {ex.Message}");
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en IsPointInsidePoly_v45: {ex.Message}");
                 return false; 
             }
         }
