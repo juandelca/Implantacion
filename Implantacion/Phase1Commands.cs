@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v46 - Forzar Polilíneas Cerradas) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v47 - Corrección 'SelectionSet.Database') ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -100,7 +100,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (MODIFICADO v46) ---
+            // --- PASO 3: Selección de Geometría (MODIFICADO v47) ---
             
             // 3a. Seleccionar Parcela
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D y CERRADA):", true); // <-- Exigir cerrada
@@ -108,7 +108,8 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nParcela cerrada seleccionada.");
 
             // 3b. Seleccionar Afecciones
-            ObjectIdCollection affectionIds = SelectMultiplePolylines(ed, "\nSeleccione las Polilíneas de Afecciones (2D y Cerradas):"); // <-- Filtrará cerradas
+            // --- CORRECCIÓN v47: Pasamos 'db' ---
+            ObjectIdCollection affectionIds = SelectMultiplePolylines(db, ed, "\nSeleccione las Polilíneas de Afecciones (2D y Cerradas):"); // <-- Filtrará cerradas
             ed.WriteMessage($"\n{affectionIds.Count} afecciones CERRADAS seleccionadas.");
 
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
@@ -167,8 +168,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
         }
 
-        // --- Función Auxiliar 1 (v46 - CORREGIDA) ---
-        // (Sobrecarga añadida para forzar 'Closed'
+        // --- Función Auxiliar 1 (Sin cambios, v46) ---
         private static ObjectId SelectPolyline(Editor ed, string message, bool requireClosed)
         {
             PromptEntityOptions peo = new PromptEntityOptions(message);
@@ -198,8 +198,8 @@ namespace Civil3D_Phase1
             return ObjectId.Null;
         }
 
-        // --- Función Auxiliar 2 (v46 - CORREGIDA) ---
-        private static ObjectIdCollection SelectMultiplePolylines(Editor ed, string message)
+        // --- Función Auxiliar 2 (v47 - CORREGIDA) ---
+        private static ObjectIdCollection SelectMultiplePolylines(Database db, Editor ed, string message) // <-- db AÑADIDO
         {
             ObjectIdCollection finalCollection = new ObjectIdCollection();
             PromptSelectionOptions pso = new PromptSelectionOptions();
@@ -219,7 +219,8 @@ namespace Civil3D_Phase1
             if (psr.Status == PromptStatus.OK)
             {
                 int openCount = 0;
-                using (Transaction tr = psr.Value.Database.TransactionManager.StartTransaction())
+                // --- CORRECCIÓN v47: Usar 'db' ---
+                using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     foreach (ObjectId id in psr.Value.GetObjectIds())
                     {
@@ -417,7 +418,7 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly_v45' (Sin cambios) ---
+        // --- 'IsPointInsidePoly_v44' (Sin cambios) ---
         private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
         {
             try
