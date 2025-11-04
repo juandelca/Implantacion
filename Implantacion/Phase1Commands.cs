@@ -7,10 +7,8 @@ using System.Collections.Generic;
 using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
-using System.Linq;
-
-// NOTA v54: Se ha eliminado la referencia a System.Linq
-// porque ya no usamos las funciones de listas de vértices.
+// Se elimina 'System.Linq' ya que no se usa y causó confusión en el log de compilación
+// using System.Linq; 
 
 namespace Civil3D_Phase1
 {
@@ -49,7 +47,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v54 - Nueva Arq. 'Region' Nativa) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v55 - Arq. 'Region' API Antigua) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -119,7 +117,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v54) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v55) ---
             ed.WriteMessage("\nCreando capas de salida...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -128,13 +126,13 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Region) ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Region v55) ---");
 
-            LayoutResult finalLayout = RunLayout_v54(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            LayoutResult finalLayout = RunLayout_v55(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
             {
-                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v54).");
+                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v55).");
                 return;
             }
 
@@ -157,7 +155,7 @@ namespace Civil3D_Phase1
             DrawFinalLayout(db, finalLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito!");
 
-            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v54) ---");
+            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v55) ---");
         }
 
         // --- Función Auxiliar 1 (SelectPolyline, v46) ---
@@ -300,8 +298,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v54' (MODIFICADO TOTALMENTE v54) ---
-        private static LayoutResult RunLayout_v54(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v55' (MODIFICADO v55) ---
+        private static LayoutResult RunLayout_v55(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
             {
@@ -309,7 +307,6 @@ namespace Civil3D_Phase1
                 TrackersToDraw = new List<Polyline>()
             };
 
-            // Contenedor para nuestra 'Region' de validez final
             Region validityRegion = null;
             Extents3d totalExtents;
 
@@ -320,14 +317,14 @@ namespace Civil3D_Phase1
                 {
                     // 1a. Crear la Región base desde el Área Neta
                     Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
-                    if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); return null; }
-                    totalExtents = netAreaCurve.GeometricExtents; // Obtener límites para el bucle
+                    if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); tr.Abort(); return null; }
+                    totalExtents = netAreaCurve.GeometricExtents;
                     
                     DBObjectCollection netCurveColl = new DBObjectCollection();
                     netCurveColl.Add(netAreaCurve);
                     
                     DBObjectCollection regionColl = Region.CreateFromCurves(netCurveColl);
-                    if (regionColl.Count == 0) { ed.WriteMessage("\nERROR: No se pudo crear la Región del Área Neta (¿curva inválida?)."); return null; }
+                    if (regionColl.Count == 0) { ed.WriteMessage("\nERROR: No se pudo crear la Región del Área Neta."); tr.Abort(); return null; }
                     validityRegion = regionColl[0] as Region;
                     
                     // 1b. Restar (Subtract) todas las afecciones
@@ -343,34 +340,32 @@ namespace Civil3D_Phase1
                         if (affRegionColl.Count > 0)
                         {
                             Region affRegion = affRegionColl[0] as Region;
-                            // Esta es la operación clave:
-                            validityRegion.BooleanOperation(BooleanOperationType.Subtract, affRegion);
+                            
+                            // --- CAMBIO v55: Usar 'kSubtract' para API antigua ---
+                            validityRegion.BooleanOperation(BooleanOperationType.kSubtract, affRegion);
+                            
+                            // Limpiar la región de afección temporal
+                            affRegion.Dispose();
                         }
                     }
-
-                    // No necesitamos 'Commit', solo usamos la 'validityRegion' en memoria
-                    // tr.Abort(); // Abortar la transacción al salir del 'using'
+                    
+                    // No necesitamos 'Commit', la transacción es solo para leer y crear
+                    // objetos en memoria. Se Abortará al salir del 'using'.
                 }
                 catch (System.Exception ex)
                 {
-                    ed.WriteMessage($"\nERROR CRÍTICO al crear Regiones (v54): {ex.Message}");
+                    ed.WriteMessage($"\nERROR CRÍTICO al crear Regiones (v55): {ex.Message}");
+                    if (validityRegion != null) validityRegion.Dispose();
+                    tr.Abort(); // Asegurarse de abortar en caso de error
                     return null; // Fallo total
                 }
-                finally
-                {
-                    if (validityRegion != null && !validityRegion.IsDisposed)
-                    {
-                         // No hacemos dispose aquí, la usaremos fuera de la transacción
-                         // Haremos dispose de ella al final
-                    }
-                }
-            } // La transacción se cierra aquí (y se Aborta)
+            } // La transacción se cierra y se Aborta aquí
 
 
             // --- 2. ITERAR LA GRILLA (usando la Región) ---
-            if (validityRegion == null)
+            if (validityRegion == null || validityRegion.IsDisposed)
             {
-                ed.WriteMessage("\nERROR: La Región de Validez es nula. Cancelando.");
+                ed.WriteMessage("\nERROR: La Región de Validez es nula o fue eliminada. Cancelando.");
                 return null;
             }
 
@@ -386,8 +381,8 @@ namespace Civil3D_Phase1
                         // 3. Probar Tracker Largo
                         Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                         
-                        // 4. Test de Colisión NATIVO (v54)
-                        if (IsTrackerValid_4Corners_v54(validityRegion, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                        // 4. Test de Colisión NATIVO (v55)
+                        if (IsTrackerValid_4Corners_v55(validityRegion, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                         {
                             layout.LongTrackers++;
                             layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -399,7 +394,7 @@ namespace Civil3D_Phase1
                             if (tracker.longitud_corto > 0.01)
                             {
                                 centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                                if (IsTrackerValid_4Corners_v54(validityRegion, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                                if (IsTrackerValid_4Corners_v55(validityRegion, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                                 {
                                     layout.ShortTrackers++;
                                     layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -414,7 +409,7 @@ namespace Civil3D_Phase1
             }
             catch (System.Exception ex)
             {
-                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v54): {ex.Message}");
+                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v55): {ex.Message}");
                  return null;
             }
             finally
@@ -430,35 +425,31 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v54' (NUEVA FUNCIÓN v54) ---
+        // --- 'IsTrackerValid_4Corners_v55' (NUEVA FUNCIÓN v55) ---
         //
-        // Esta función reemplaza a 'IsPointValid_v45'.
-        // Utiliza el método nativo 'Region.Contains()' de AutoCAD para la colisión.
-        // NOTA: 'Region.Contains' necesita Point3d (Z=0).
+        // Reemplaza 'region.Contains' (moderno) por 'region.IsPointInside' (antiguo).
         //
-        private static bool IsTrackerValid_4Corners_v54(Region validRegion, Point3d center, double length, double width)
+        private static bool IsTrackerValid_4Corners_v55(Region validRegion, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
             
             // Usamos Point3d para la comprobación nativa
-            // (Asumimos Z=0 para todo el layout 2D)
             Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
             Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
             Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
             Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
 
             // Tolerancia para la comprobación.
-            // Esto es crucial para errores de precisión de flotantes.
             Tolerance tol = new Tolerance(1e-6, 1e-6); // 0.000001 metros
 
             //
-            // --- ESTA ES LA LÓGICA DE COLISIÓN CORREGIDA ---
+            // --- CAMBIO v55: LÓGICA DE COLISIÓN CORREGIDA (API ANTIGUA) ---
             //
-            if (!validRegion.Contains(p1, tol)) return false;
-            if (!validRegion.Contains(p2, tol)) return false;
-            if (!validRegion.Contains(p3, tol)) return false;
-            if (!validRegion.Contains(p4, tol)) return false;
+            if (!validRegion.IsPointInside(p1, tol)) return false;
+            if (!validRegion.IsPointInside(p2, tol)) return false;
+            if (!validRegion.IsPointInside(p3, tol)) return false;
+            if (!validRegion.IsPointInside(p4, tol)) return false;
 
             return true; // Todas las esquinas están DENTRO de la Región válida
         }
@@ -501,12 +492,5 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
         }
-
-        // --- FUNCIONES ANTIGUAS/ERRÓNEAS (ELIMINADAS en v54) ---
-        //
-        // private static bool IsPointValid_v45(...) {...}
-        // private static bool IsPointInsidePoly_v45(...) {...}
-        // private static List<Point2d> GetTessellatedVertices_v53(...) {...}
-        //
     }
 }
