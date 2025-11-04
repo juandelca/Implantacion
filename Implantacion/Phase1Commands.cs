@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v45 - Corrección Vértices WCS) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v46 - Forzar Polilíneas Cerradas) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -100,16 +100,16 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (Sin cambios, v41) ---
+            // --- PASO 3: Selección de Geometría (MODIFICADO v46) ---
             
             // 3a. Seleccionar Parcela
-            ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D):");
+            ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D y CERRADA):", true); // <-- Exigir cerrada
             if (parcelId == ObjectId.Null) { return; }
-            ed.WriteMessage("\nParcela seleccionada.");
+            ed.WriteMessage("\nParcela cerrada seleccionada.");
 
             // 3b. Seleccionar Afecciones
-            ObjectIdCollection affectionIds = SelectMultiplePolylines(ed, "\nSeleccione las Polilíneas de Afecciones (Deben ser 2D):");
-            ed.WriteMessage($"\n{affectionIds.Count} afecciones seleccionadas.");
+            ObjectIdCollection affectionIds = SelectMultiplePolylines(ed, "\nSeleccione las Polilíneas de Afecciones (2D y Cerradas):"); // <-- Filtrará cerradas
+            ed.WriteMessage($"\n{affectionIds.Count} afecciones CERRADAS seleccionadas.");
 
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
 
@@ -137,7 +137,6 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN v45 ---
             LayoutResult finalLayout = RunLayout_v45(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
@@ -168,21 +167,41 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
         }
 
-        // --- Función Auxiliar 1 (Sin cambios, v41) ---
-        private static ObjectId SelectPolyline(Editor ed, string message)
+        // --- Función Auxiliar 1 (v46 - CORREGIDA) ---
+        // (Sobrecarga añadida para forzar 'Closed'
+        private static ObjectId SelectPolyline(Editor ed, string message, bool requireClosed)
         {
             PromptEntityOptions peo = new PromptEntityOptions(message);
             peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea 2D.");
             peo.AddAllowedClass(typeof(Polyline), true); 
             peo.AddAllowedClass(typeof(Polyline2d), true); 
+
             PromptEntityResult per = ed.GetEntity(peo);
-            if (per.Status == PromptStatus.OK) { return per.ObjectId; }
+            if (per.Status == PromptStatus.OK)
+            {
+                if (requireClosed)
+                {
+                    using (Transaction tr = per.ObjectId.Database.TransactionManager.StartTransaction())
+                    {
+                        Curve curve = tr.GetObject(per.ObjectId, OpenMode.ForRead) as Curve;
+                        if (curve != null && !curve.Closed)
+                        {
+                            ed.WriteMessage("\nERROR: La polilínea seleccionada debe estar CERRADA. Cancelando.");
+                            tr.Abort();
+                            return ObjectId.Null;
+                        }
+                        tr.Commit();
+                    }
+                }
+                return per.ObjectId;
+            }
             return ObjectId.Null;
         }
 
-        // --- Función Auxiliar 2 (Sin cambios, v41) ---
+        // --- Función Auxiliar 2 (v46 - CORREGIDA) ---
         private static ObjectIdCollection SelectMultiplePolylines(Editor ed, string message)
         {
+            ObjectIdCollection finalCollection = new ObjectIdCollection();
             PromptSelectionOptions pso = new PromptSelectionOptions();
             pso.MessageForAdding = message;
             pso.MessageForRemoval = "\nEliminar objetos de la selección:";
@@ -196,8 +215,32 @@ namespace Civil3D_Phase1
             };
             SelectionFilter selFilter = new SelectionFilter(filter);
             PromptSelectionResult psr = ed.GetSelection(pso, selFilter);
-            if (psr.Status == PromptStatus.OK) { return new ObjectIdCollection(psr.Value.GetObjectIds()); }
-            return new ObjectIdCollection(); 
+            
+            if (psr.Status == PromptStatus.OK)
+            {
+                int openCount = 0;
+                using (Transaction tr = psr.Value.Database.TransactionManager.StartTransaction())
+                {
+                    foreach (ObjectId id in psr.Value.GetObjectIds())
+                    {
+                        Curve curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
+                        if (curve != null && curve.Closed)
+                        {
+                            finalCollection.Add(id);
+                        }
+                        else
+                        {
+                            openCount++;
+                        }
+                    }
+                    tr.Commit();
+                }
+                if (openCount > 0)
+                {
+                    ed.WriteMessage($"\n(Se ignoraron {openCount} polilíneas abiertas que no estaban cerradas.)");
+                }
+            }
+            return finalCollection; 
         }
 
         // --- Función Auxiliar 4 (CreateLayer, sin cambios) ---
@@ -263,8 +306,7 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunLayout' (v45 - CORREGIDA) ---
-        // (El nombre es v45, pero llama a las funciones v45)
+        // --- 'RunLayout_v45' (Sin cambios) ---
         private static LayoutResult RunLayout_v45(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
@@ -284,7 +326,6 @@ namespace Civil3D_Phase1
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
                 
-                // --- LLAMANDO A LA NUEVA FUNCIÓN v45 ---
                 netAreaVertices = Get2DVertices_v45(netAreaCurve); 
                 
                 foreach (ObjectId id in affectionIds)
@@ -292,7 +333,6 @@ namespace Civil3D_Phase1
                     Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                     if (affCurve != null)
                     {
-                        // --- LLAMANDO A LA NUEVA FUNCIÓN v45 ---
                         affectionVerticesList.Add(Get2DVertices_v45(affCurve)); 
                     }
                 }
@@ -342,7 +382,7 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v45' (CORREGIDA) ---
+        // --- 'IsTrackerValid_4Corners_v45' (Sin cambios) ---
         private static bool IsTrackerValid_4Corners_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
@@ -362,7 +402,7 @@ namespace Civil3D_Phase1
             return true; // Todas las esquinas están bien
         }
 
-        // --- 'IsPointValid_v45' (CORREGIDA) ---
+        // --- 'IsPointValid_v45' (Sin cambios) ---
         private static bool IsPointValid_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
@@ -377,10 +417,7 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly_v45' (CORREGIDA) ---
-        /// <summary>
-        /// Algoritmo Ray-Casting 2D puro sobre una lista de vértices 2D.
-        /// </summary>
+        // --- 'IsPointInsidePoly_v45' (Sin cambios) ---
         private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
         {
             try
@@ -419,10 +456,7 @@ namespace Civil3D_Phase1
             }
         }
         
-        // --- FUNCIÓN 'Get2DVertices' (v45 - CORREGIDA) ---
-        /// <summary>
-        /// Extrae los vértices 2D (X, Y) de una Polyline o Polyline2d, usando WCS.
-        /// </summary>
+        // --- 'Get2DVertices_v45' (Sin cambios) ---
         private static List<Point2d> Get2DVertices_v45(Curve curve)
         {
             List<Point2d> vertices = new List<Point2d>();
@@ -431,7 +465,6 @@ namespace Civil3D_Phase1
             {
                 for (int i = 0; i < poly.NumberOfVertices; i++)
                 {
-                    // --- CORRECCIÓN ---
                     // Obtener el vértice 3D (WCS) y extraer X, Y
                     Point3d pt3d = poly.GetPoint3dAt(i);
                     vertices.Add(new Point2d(pt3d.X, pt3d.Y));
