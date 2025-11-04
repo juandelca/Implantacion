@@ -8,6 +8,8 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
+// --- NUEVO IMPORT PARA EL MÉTODO HATCH ---
+using Autodesk.AutoCAD.GraphicsInterface;
 
 namespace Civil3D_Phase1
 {
@@ -46,7 +48,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v47 - Corrección 'SelectionSet.Database') ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v48 - Colisión por Hatch) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -100,7 +102,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (MODIFICADO v47) ---
+            // --- PASO 3: Selección de Geometría (Sin cambios, v46) ---
             
             // 3a. Seleccionar Parcela
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D y CERRADA):", true); // <-- Exigir cerrada
@@ -108,7 +110,6 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nParcela cerrada seleccionada.");
 
             // 3b. Seleccionar Afecciones
-            // --- CORRECCIÓN v47: Pasamos 'db' ---
             ObjectIdCollection affectionIds = SelectMultiplePolylines(db, ed, "\nSeleccione las Polilíneas de Afecciones (2D y Cerradas):"); // <-- Filtrará cerradas
             ed.WriteMessage($"\n{affectionIds.Count} afecciones CERRADAS seleccionadas.");
 
@@ -126,7 +127,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (Sin cambios, v44) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v48) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -136,9 +137,10 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método Hatch) ---");
             
-            LayoutResult finalLayout = RunLayout_v45(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            // --- LLAMADA A LA NUEVA FUNCIÓN v48 ---
+            LayoutResult finalLayout = RunLayout_v48(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
             {
@@ -198,8 +200,8 @@ namespace Civil3D_Phase1
             return ObjectId.Null;
         }
 
-        // --- Función Auxiliar 2 (v47 - CORREGIDA) ---
-        private static ObjectIdCollection SelectMultiplePolylines(Database db, Editor ed, string message) // <-- db AÑADIDO
+        // --- Función Auxiliar 2 (Sin cambios, v47) ---
+        private static ObjectIdCollection SelectMultiplePolylines(Database db, Editor ed, string message)
         {
             ObjectIdCollection finalCollection = new ObjectIdCollection();
             PromptSelectionOptions pso = new PromptSelectionOptions();
@@ -219,7 +221,6 @@ namespace Civil3D_Phase1
             if (psr.Status == PromptStatus.OK)
             {
                 int openCount = 0;
-                // --- CORRECCIÓN v47: Usar 'db' ---
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     foreach (ObjectId id in psr.Value.GetObjectIds())
@@ -307,8 +308,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v45' (Sin cambios) ---
-        private static LayoutResult RunLayout_v45(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- FUNCIÓN 'RunLayout_v48' (MODIFICADA) ---
+        private static LayoutResult RunLayout_v48(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
             { 
@@ -316,32 +317,16 @@ namespace Civil3D_Phase1
                 TrackersToDraw = new List<Polyline>() 
             };
 
-            // 1. Abrir las geometrías y convertirlas a listas de vértices 2D (WCS)
-            List<Point2d> netAreaVertices = new List<Point2d>();
-            List<List<Point2d>> affectionVerticesList = new List<List<Point2d>>();
+            // 1. Abrir las geometrías y obtener sus extents
             Extents3d totalExtents = new Extents3d();
-
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
-                
-                netAreaVertices = Get2DVertices_v45(netAreaCurve); 
-                
-                foreach (ObjectId id in affectionIds)
-                {
-                    Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
-                    if (affCurve != null)
-                    {
-                        affectionVerticesList.Add(Get2DVertices_v45(affCurve)); 
-                    }
-                }
                 tr.Abort(); 
             } 
             
-            if (netAreaVertices.Count == 0) return null;
-
             // 2. Iterar la Grilla (N-S)
             // Bucle E-O (X) - Filas
             for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
@@ -354,7 +339,7 @@ namespace Civil3D_Phase1
                     Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                     
                     // 4. Test de Colisión (4-ESQUINAS)
-                    if (IsTrackerValid_4Corners_v45(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                    if (IsTrackerValid_4Corners_v48(db, netAreaId, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                     {
                         layout.LongTrackers++;
                         layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -366,7 +351,7 @@ namespace Civil3D_Phase1
                         if (tracker.longitud_corto > 0.01)
                         {
                             centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                            if (IsTrackerValid_4Corners_v45(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                            if (IsTrackerValid_4Corners_v48(db, netAreaId, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                             {
                                 layout.ShortTrackers++;
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -383,105 +368,112 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v45' (Sin cambios) ---
-        private static bool IsTrackerValid_4Corners_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
+        // --- FUNCIÓN 'IsTrackerValid_4Corners_v48' (MODIFICADA) ---
+        private static bool IsTrackerValid_4Corners_v48(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
 
-            // Usamos Point2d para la comprobación 2D pura
-            Point2d p1 = new Point2d(center.X - halfWid, center.Y - halfLen); // Abajo-Izquierda
-            Point2d p2 = new Point2d(center.X + halfWid, center.Y - halfLen); // Abajo-Derecha
-            Point2d p3 = new Point2d(center.X + halfWid, center.Y + halfLen); // Arriba-Derecha
-            Point2d p4 = new Point2d(center.X - halfWid, center.Y + halfLen); // Arriba-Izquierda
+            Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
+            Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
+            Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
+            Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
 
-            if (!IsPointValid_v45(netArea, affections, p1)) return false;
-            if (!IsPointValid_v45(netArea, affections, p2)) return false;
-            if (!IsPointValid_v45(netArea, affections, p3)) return false;
-            if (!IsPointValid_v45(netArea, affections, p4)) return false;
+            // Usamos una única transacción para todas las comprobaciones de este tracker
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                if (!IsPointValid_v48(tr, netAreaId, affections, p1)) { tr.Abort(); return false; }
+                if (!IsPointValid_v48(tr, netAreaId, affections, p2)) { tr.Abort(); return false; }
+                if (!IsPointValid_v48(tr, netAreaId, affections, p3)) { tr.Abort(); return false; }
+                if (!IsPointValid_v48(tr, netAreaId, affections, p4)) { tr.Abort(); return false; }
+                
+                tr.Abort(); // Todo bien, no guardamos nada
+            }
 
             return true; // Todas las esquinas están bien
         }
 
-        // --- 'IsPointValid_v45' (Sin cambios) ---
-        private static bool IsPointValid_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
+        // --- FUNCIÓN 'IsPointValid_v48' (MODIFICADA) ---
+        private static bool IsPointValid_v48(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInsidePoly_v45(netArea, testPoint)) { return false; }
+            if (!IsPointInsidePoly_Hatch_v48(tr, netAreaId, testPoint)) { return false; }
             
             // Condición 2: NO debe estar dentro de NINGUNA afección
-            foreach (List<Point2d> affPoly in affections)
+            foreach (ObjectId affId in affections)
             {
-                if (IsPointInsidePoly_v45(affPoly, testPoint)) { return false; }
+                if (IsPointInsidePoly_Hatch_v48(tr, affId, testPoint)) { return false; }
             }
             
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly_v44' (Sin cambios) ---
-        private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
+        // --- FUNCIÓN 'IsPointInsidePoly_Hatch_v48' (NUEVA) ---
+        /// <summary>
+        /// Comprobación de colisión 100% fiable usando un Hatch temporal.
+        /// </summary>
+        private static bool IsPointInsidePoly_Hatch_v48(Transaction tr, ObjectId polyId, Point3d testPoint)
         {
+            Hatch hatch = null;
             try
             {
-                int crossings = 0;
-                double testX = testPoint.X;
-                double testY = testPoint.Y;
+                // 1. Abrir la polilínea CERRADA
+                Entity poly = (Entity)tr.GetObject(polyId, OpenMode.ForRead);
 
-                for (int i = 0; i < vertices.Count; i++)
-                {
-                    Point2d p1 = vertices[i];
-                    Point2d p2 = vertices[(i + 1) % vertices.Count]; // Siguiente o el primero
+                // 2. Crear un Hatch en memoria
+                hatch = new Hatch();
+                hatch.SetDatabaseDefaults();
+                hatch.PatternScale = 1.0;
+                hatch.SetHatchPattern(HatchPatternType.PreDefined, "SOLID");
+                
+                // 3. Añadir la polilínea como bucle exterior
+                ObjectIdCollection loopIds = new ObjectIdCollection();
+                loopIds.Add(polyId);
+                hatch.AppendLoop(HatchLoopTypes.Outermost, loopIds);
 
-                    double p1_X = p1.X;
-                    double p1_Y = p1.Y;
-                    double p2_X = p2.X;
-                    double p2_Y = p2.Y;
+                // 4. Generar el sombreado
+                hatch.EvaluateHatch(true);
 
-                    if (((p1_Y <= testY && p2_Y > testY) || (p1_Y > testY && p2_Y <= testY)))
-                    {
-                        if (p2_Y - p1_Y == 0) continue; 
-                        
-                        double x_intercept = (p2_X - p1_X) * (testY - p1_Y) / (p2_Y - p1_Y) + p1_X;
-                        if (testX < x_intercept)
-                        {
-                            crossings++;
-                        }
-                    }
-                }
-                return (crossings % 2 == 1); // Impar = Dentro
+                // 5. La comprobación fiable
+                // Proyecta el punto al plano del hatch y comprueba
+                Point2d testPoint2d;
+                hatch.IsPointInHatch(testPoint, out testPoint2d); 
+                
+                // IsPointInHatch devuelve un bool, pero es más fiable comprobar
+                // el "Bulge" (curvatura) en el punto 2D de salida.
+                // Si el punto está DENTRO, BulgeAt devolverá 0.
+                // Si está FUERA, lanzará una excepción (eOutsideHatch).
+                
+                // Comprobación de si el punto está dentro.
+                hatch.BulgeAt(testPoint2d);
+
+                // Si no ha lanzado excepción, está DENTRO.
+                hatch.Dispose(); // Limpiar el hatch temporal
+                return true;
             }
-            catch (System.Exception ex)
+            catch (Autodesk.AutoCAD.DatabaseServices.Exception ex)
             {
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en IsPointInsidePoly_v45: {ex.Message}");
-                return false; 
+                // Si el error es 'eOutsideHatch', el punto está FUERA (es válido para una afección)
+                if (ex.ErrorStatus == ErrorStatus.OutsideHatch)
+                {
+                    if (hatch != null) hatch.Dispose();
+                    return false; // Está FUERA
+                }
+                
+                // Otro error
+                if (hatch != null) hatch.Dispose();
+                return false; // Asumir fuera por seguridad
+            }
+            catch (System.Exception)
+            {
+                // Error general
+                if (hatch != null) hatch.Dispose();
+                return false; // Asumir fuera por seguridad
             }
         }
         
-        // --- 'Get2DVertices_v45' (Sin cambios) ---
-        private static List<Point2d> Get2DVertices_v45(Curve curve)
-        {
-            List<Point2d> vertices = new List<Point2d>();
-
-            if (curve is Polyline poly) // Es una LWPOLYLINE
-            {
-                for (int i = 0; i < poly.NumberOfVertices; i++)
-                {
-                    // Obtener el vértice 3D (WCS) y extraer X, Y
-                    Point3d pt3d = poly.GetPoint3dAt(i);
-                    vertices.Add(new Point2d(pt3d.X, pt3d.Y));
-                }
-            }
-            else if (curve is Polyline2d poly2d) // Es una Polyline 2D
-            {
-                foreach (ObjectId vertexId in poly2d)
-                {
-                    Vertex2d vertex = (Vertex2d)vertexId.GetObject(OpenMode.ForRead);
-                    // vertex.Position ya es un Point3d (WCS)
-                    vertices.Add(new Point2d(vertex.Position.X, vertex.Position.Y));
-                }
-            }
-            return vertices;
-        }
+        // --- 'Get2DVertices_v45' (ELIMINADO - ya no se usa) ---
+        // --- 'IsPointInsidePoly_v45' (ELIMINADO - ya no se usa) ---
 
         // --- 'CreateTrackerPolyline_NS' (Sin cambios) ---
         private static Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
