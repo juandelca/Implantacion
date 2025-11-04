@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v47 - Corregida Detección de Curvas/Arcos) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v48 - API Antigua Compatible 'GetPointAtDist') ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -145,6 +145,8 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
 
+            // El nombre de la función 'RunLayout_v47' se mantiene, pero llama
+            // internamente a la nueva lógica de teselado v48.
             LayoutResult finalLayout = RunLayout_v47(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
@@ -313,7 +315,7 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v47' (MODIFICADA v47) ---
+        // --- 'RunLayout_v47' (Sin cambios en la llamada, pero usa la nueva v48) ---
         private static LayoutResult RunLayout_v47(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
@@ -333,16 +335,16 @@ namespace Civil3D_Phase1
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
 
-                // --- CAMBIO v47: Usar Teselación para leer curvas ---
-                netAreaVertices = GetTessellatedVertices_v47(netAreaCurve);
+                // --- LLAMA A LA NUEVA LÓGICA v48 ---
+                netAreaVertices = GetTessellatedVertices_v48_Compatible(netAreaCurve);
 
                 foreach (ObjectId id in affectionIds)
                 {
                     Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                     if (affCurve != null)
                     {
-                        // --- CAMBIO v47: Usar Teselación para leer curvas ---
-                        affectionVerticesList.Add(GetTessellatedVertices_v47(affCurve));
+                        // --- LLAMA A LA NUEVA LÓGICA v48 ---
+                        affectionVerticesList.Add(GetTessellatedVertices_v48_Compatible(affCurve));
                     }
                 }
                 tr.Abort();
@@ -466,11 +468,14 @@ namespace Civil3D_Phase1
             }
         }
 
-        // --- 'GetTessellatedVertices_v47' (NUEVA v47) ---
-        // Reemplaza a Get2DVertices_v45.
-        // Esta función convierte la curva (incluyendo arcos/bulges) en una lista
-        // densa de vértices (tessellation) para que el Point-in-Poly funcione.
-        private static List<Point2d> GetTessellatedVertices_v47(Curve curve)
+        // --- 'GetTessellatedVertices_v48_Compatible' (NUEVA v48) ---
+        //
+        // REEMPLAZO COMPLETO DE LA FUNCIÓN QUE FALLABA (GetSamplePoints)
+        //
+        // Esta versión usa 'GetPointAtDist' para ser compatible con
+        // versiones antiguas de la API de Civil 3D (anteriores a 2022).
+        //
+        private static List<Point2d> GetTessellatedVertices_v48_Compatible(Curve curve)
         {
             List<Point2d> vertices = new List<Point2d>();
             if (curve == null) return vertices;
@@ -478,49 +483,55 @@ namespace Civil3D_Phase1
             try
             {
                 // Definimos la precisión de la conversión de curva a polígono.
-                // 1.0 = 1 metro. 0.1 = 10cm. 
-                // Un valor más bajo es más preciso pero más lento. 0.5m está bien.
-                const double TESSELLATION_DISTANCE = 0.5;
+                const double TESSELLATION_DISTANCE = 0.5; // 0.5m de precisión
 
-                // GetSamplePoints es la función mágica que traza arcos y splines.
-                Point3dCollection points = curve.GetSamplePoints(TESSELLATION_DISTANCE);
+                // GetDistanceAtParameter y GetPointAtDist son los métodos compatibles
+                // Nota: Usamos GetEndParam() para asegurarnos de que funcione con Polilíneas 2D
+                double totalLength = curve.GetDistanceAtParameter(curve.EndParam); 
+                double currentDistance = 0;
 
-                if (points == null || points.Count == 0)
+                while (currentDistance < totalLength)
                 {
-                    // Fallback por si GetSamplePoints falla (ej. una línea recta)
-                    // Usamos el método antiguo de solo vértices
-                    if (curve is Polyline poly)
+                    Point3d pt3d = curve.GetPointAtDist(currentDistance);
+                    vertices.Add(new Point2d(pt3d.X, pt3d.Y));
+                    currentDistance += TESSELLATION_DISTANCE;
+                }
+
+                // Asegurarnos de añadir el último punto exacto
+                Point3d endPt = curve.GetPointAtDist(totalLength);
+                vertices.Add(new Point2d(endPt.X, endPt.Y));
+            }
+            catch (System.Exception ex)
+            {
+                // Si GetPointAtDist falla (quizás con una polilínea 2D antigua),
+                // usamos el método original de solo vértices como 'fallback'.
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError al teselar curva (v48): {ex.Message}. Usando fallback de solo vértices.");
+                
+                vertices.Clear(); // Limpiamos la lista por si falló a medias
+
+                if (curve is Polyline poly) // LWPOLYLINE
+                {
+                    for (int i = 0; i < poly.NumberOfVertices; i++)
                     {
-                        for (int i = 0; i < poly.NumberOfVertices; i++)
-                        {
-                            vertices.Add(poly.GetPoint2dAt(i));
-                        }
+                        vertices.Add(poly.GetPoint2dAt(i));
                     }
-                    else if (curve is Polyline2d poly2d)
+                }
+                else if (curve is Polyline2d poly2d) // POLYLINE2D (pesada)
+                {
+                    // Necesitamos una transacción para leer los vértices de una Polyline2d
+                    using (Transaction tr = curve.Database.TransactionManager.StartTransaction())
                     {
-                        using (Transaction tr = curve.Database.TransactionManager.StartTransaction())
+                        foreach (ObjectId vertexId in poly2d)
                         {
-                            foreach (ObjectId vertexId in poly2d)
+                            if (!vertexId.IsErased)
                             {
                                 Vertex2d vertex = (Vertex2d)tr.GetObject(vertexId, OpenMode.ForRead);
                                 vertices.Add(new Point2d(vertex.Position.X, vertex.Position.Y));
                             }
-                            tr.Commit();
                         }
+                        tr.Commit(); // Solo lectura, así que Commit está bien
                     }
                 }
-                else
-                {
-                    // Éxito: convertir la colección de Point3d a Point2d
-                    foreach (Point3d pt3d in points)
-                    {
-                        vertices.Add(new Point2d(pt3d.X, pt3d.Y));
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError al teselar curva: {ex.Message}");
             }
 
             // Asegurarnos de que el polígono esté "cerrado" para el algoritmo de Ray-Casting
@@ -531,6 +542,7 @@ namespace Civil3D_Phase1
 
             return vertices;
         }
+
 
         // --- 'CreateTrackerPolyline_NS' (Sin cambios) ---
         private static Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
