@@ -8,8 +8,10 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// --- LIBRERÍAS DEFECTUOSAS ELIMINADAS ---
-// (Se eliminó BoundaryRepresentation y GraphicsInterface)
+using Autodesk.AutoCAD.GraphicsInterface; // (Necesaria para Polyline del Hatch, aunque ahora la evitamos)
+using AcRx = Autodesk.AutoCAD.Runtime; // <-- Alias para evitar conflictos de 'Exception'
+// (BoundaryRepresentation eliminado, ya no se usa)
+
 
 namespace Civil3D_Phase1
 {
@@ -34,8 +36,6 @@ namespace Civil3D_Phase1
         public int TotalTrackers { get; set; }
         public int LongTrackers { get; set; }
         public int ShortTrackers { get; set; }
-        // --- CORRECCIÓN v49 (Mantenida) ---
-        // (La ambigüedad desaparece, pero lo dejamos por si acaso)
         public List<Autodesk.AutoCAD.DatabaseServices.Polyline> TrackersToDraw { get; set; }
     }
 
@@ -50,7 +50,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v53 - Colisión por IntersectWith) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v54 - Corrección Capa 'temp') ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -129,7 +129,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v53) ---
+            // --- PASO 5: Generación de Layout (Sin cambios, v53) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -141,7 +141,6 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método IntersectWith) ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN v53 ---
             LayoutResult finalLayout = RunLayout_v53(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
@@ -310,7 +309,7 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunLayout_v53' (MODIFICADA) ---
+        // --- 'RunLayout_v53' (Sin cambios) ---
         private static LayoutResult RunLayout_v53(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
@@ -319,17 +318,17 @@ namespace Civil3D_Phase1
                 TrackersToDraw = new List<Autodesk.AutoCAD.DatabaseServices.Polyline>() 
             };
 
-            // 1. Abrir las geometrías y obtener sus extents
-            Extents3d totalExtents = new Extents3d();
-            // --- v53: Guardamos las polilíneas (en listas 2D) para usarlas en las comprobaciones
+            // 1. Abrir las geometrías y convertirlas a listas de vértices 2D (WCS)
             List<Point2d> netAreaVertices = new List<Point2d>();
             List<List<Point2d>> affectionVerticesList = new List<List<Point2d>>();
+            Extents3d totalExtents = new Extents3d();
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
+                
                 netAreaVertices = Get2DVertices_v45(netAreaCurve); // (Esta función es correcta, la mantenemos)
                 
                 foreach (ObjectId id in affectionIds)
@@ -386,7 +385,7 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- FUNCIÓN 'IsTrackerValid_v53' (NUEVA) ---
+        // --- 'IsTrackerValid_v53' (Sin cambios) ---
         private static bool IsTrackerValid_v53(Database db, List<Point2d> netArea, ObjectIdCollection affectionIds, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
@@ -440,7 +439,7 @@ namespace Civil3D_Phase1
         }
 
         
-        // --- 'IsPointInsidePoly_v45' (Mantenida, es correcta) ---
+        // --- 'IsPointInsidePoly_v45' (Sin cambios) ---
         private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
         {
             try
@@ -479,7 +478,7 @@ namespace Civil3D_Phase1
             }
         }
         
-        // --- 'Get2DVertices_v45' (Mantenida, es correcta) ---
+        // --- 'Get2DVertices_v45' (Sin cambios) ---
         private static List<Point2d> Get2DVertices_v45(Curve curve)
         {
             List<Point2d> vertices = new List<Point2d>();
@@ -505,16 +504,20 @@ namespace Civil3D_Phase1
             return vertices;
         }
 
-        // --- 'CreateTrackerPolyline_NS' (v49 - CORREGIDA) ---
+        // --- 'CreateTrackerPolyline_NS' (v54 - CORREGIDA) ---
         private static Autodesk.AutoCAD.DatabaseServices.Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
         {
             double halfLen = length / 2.0; // Y-axis
             double halfWid = width / 2.0;  // X-axis
             
-            // --- CORRECCIÓN v49: Nombre completo ---
             Autodesk.AutoCAD.DatabaseServices.Polyline rect = new Autodesk.AutoCAD.DatabaseServices.Polyline();
             rect.SetDatabaseDefaults();
-            rect.Layer = layer;
+            
+            // --- CORRECCIÓN v54: Solo asignar capa si no es temporal ---
+            if (layer != "temp")
+            {
+                rect.Layer = layer;
+            }
             
             rect.AddVertexAt(0, new Point2d(center.X - halfWid, center.Y - halfLen), 0, 0, 0); 
             rect.AddVertexAt(1, new Point2d(center.X + halfWid, center.Y - halfLen), 0, 0, 0); 
@@ -533,7 +536,6 @@ namespace Civil3D_Phase1
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
-                // --- CORRECCIÓN v49: Nombre completo ---
                 foreach (Autodesk.AutoCAD.DatabaseServices.Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
                     btr.AppendEntity(trackerPoly);
