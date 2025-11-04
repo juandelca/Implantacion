@@ -9,6 +9,9 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
 
+// NOTA v54: Se ha eliminado la referencia a System.Linq
+// porque ya no usamos las funciones de listas de vértices.
+
 namespace Civil3D_Phase1
 {
     public class TrackerModel
@@ -46,7 +49,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v53 - Corregido Fallback de Teselación) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v54 - Nueva Arq. 'Region' Nativa) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -57,18 +60,10 @@ namespace Civil3D_Phase1
             {
                 string jsonContent = File.ReadAllText(jsonPath);
                 trackerLibrary = JsonConvert.DeserializeObject<List<TrackerModel>>(jsonContent);
-                if (trackerLibrary == null || trackerLibrary.Count == 0)
-                {
-                    ed.WriteMessage("\nERROR: No se pudo cargar 'trackers.json' o está vacío. Asegúrese de que el JSON está en la misma carpeta que la DLL.");
-                    return;
-                }
+                if (trackerLibrary == null || trackerLibrary.Count == 0) { ed.WriteMessage("\nERROR: 'trackers.json' vacío."); return; }
                 ed.WriteMessage($"\nBiblioteca 'trackers.json' cargada. {trackerLibrary.Count} modelos encontrados.");
             }
-            catch (System.Exception ex)
-            {
-                ed.WriteMessage($"\nERROR al leer 'trackers.json': {ex.Message}. Asegúrese de que el JSON está en la misma carpeta que la DLL.");
-                return;
-            }
+            catch (System.Exception ex) { ed.WriteMessage($"\nERROR al leer 'trackers.json': {ex.Message}."); return; }
 
 
             // --- PASO 2: Solicitar Inputs de Layout (Sin cambios, v44) ---
@@ -81,7 +76,7 @@ namespace Civil3D_Phase1
             if (prTracker.Status != PromptStatus.OK) { return; }
             string selectedTrackerId = prTracker.StringResult;
             TrackerModel selectedTracker = trackerLibrary.Find(t => t.id_tracker == selectedTrackerId);
-            ed.WriteMessage($"\nTracker '{selectedTracker.id_tracker}' seleccionado. (Ancho E-O: {selectedTracker.ancho_huella_ns}m)");
+            ed.WriteMessage($"\nTracker '{selectedTracker.id_tracker}' seleccionado.");
 
             // 2b. Pedir Pitch Eje-a-Eje (E-O)
             PromptDoubleOptions pdoPitch = new PromptDoubleOptions("\nIntroduzca el Pitch Eje-a-Eje (E-O) en metros:");
@@ -109,54 +104,43 @@ namespace Civil3D_Phase1
 
 
             // --- PASO 3: Selección de Geometría (Sin cambios, v46) ---
-
-            // 3a. Seleccionar Parcela
-            ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D y CERRADA):", true); // <-- Exigir cerrada
+            ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (CERRADA):", true);
             if (parcelId == ObjectId.Null) { return; }
             ed.WriteMessage("\nParcela cerrada seleccionada.");
 
-            // 3b. Seleccionar Afecciones
-            ObjectIdCollection affectionIds = SelectMultiplePolylines(db, ed, "\nSeleccione las Polilíneas de Afecciones (2D y Cerradas):"); // <-- Filtrará cerradas
+            ObjectIdCollection affectionIds = SelectMultiplePolylines(db, ed, "\nSeleccione las Polilíneas de Afecciones (CERRADAS):");
             ed.WriteMessage($"\n{affectionIds.Count} afecciones CERRADAS seleccionadas.");
-
-            ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
 
 
             // --- PASO 4: Cálculo de Área Neta (Sin cambios) ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
-
-            // 4a. Calcular Retranqueo (Setback)
             ObjectId netAreaId = GetNetArea(db, parcelId, setback);
-            if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo). Cancelando."); return; }
-            ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada en 'AREA_NETA'!");
-
-            ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
+            if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo)."); return; }
+            ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
 
 
-            // --- PASO 5: Generación de Layout (Sin cambios, v44) ---
-
-            ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
+            // --- PASO 5: Generación de Layout (MODIFICADO v54) ---
+            ed.WriteMessage("\nCreando capas de salida...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                CreateLayer(db, tr, "TRACKERS_LARGOS", Color.FromRgb(0, 100, 255)); // Azul
-                CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0)); // Naranja
+                CreateLayer(db, tr, "TRACKERS_LARGOS", Color.FromRgb(0, 100, 255));
+                CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0));
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Region) ---");
 
-            // --- CAMBIO v53: Llamada a la nueva función de Layout ---
-            LayoutResult finalLayout = RunLayout_v53(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            LayoutResult finalLayout = RunLayout_v54(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
             {
-                ed.WriteMessage("\nERROR: No se encontró ningún layout válido (Área Cero?).");
+                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v54).");
                 return;
             }
 
             if (finalLayout.TotalTrackers == 0)
             {
-                ed.WriteMessage("\nAVISO: La generación de layout se completó, pero no caben trackers en el área válida.");
+                ed.WriteMessage("\nAVISO: No caben trackers en el área válida.");
                 return;
             }
 
@@ -169,11 +153,11 @@ namespace Civil3D_Phase1
 
 
             // --- PASO 6: Dibujado Final (Sin cambios) ---
-            ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout Ganador ---");
+            ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout ---");
             DrawFinalLayout(db, finalLayout);
-            ed.WriteMessage("\n¡Trackers dibujados con éxito en capas 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'!");
+            ed.WriteMessage("\n¡Trackers dibujados con éxito!");
 
-            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
+            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v54) ---");
         }
 
         // --- Función Auxiliar 1 (SelectPolyline, v46) ---
@@ -183,6 +167,7 @@ namespace Civil3D_Phase1
             peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea 2D.");
             peo.AddAllowedClass(typeof(Polyline), true);
             peo.AddAllowedClass(typeof(Polyline2d), true);
+            peo.AddAllowedClass(typeof(Circle), true); // Permitir Círculos también
 
             PromptEntityResult per = ed.GetEntity(peo);
             if (per.Status == PromptStatus.OK)
@@ -219,6 +204,7 @@ namespace Civil3D_Phase1
                 new TypedValue((int)DxfCode.Start, "POLYLINE"),
                 new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
                 new TypedValue((int)DxfCode.Start, "POLYLINE2D"),
+                new TypedValue((int)DxfCode.Start, "CIRCLE"), // Permitir Círculos también
                 new TypedValue((int)DxfCode.Operator, "OR>")
             };
             SelectionFilter selFilter = new SelectionFilter(filter);
@@ -245,7 +231,7 @@ namespace Civil3D_Phase1
                 }
                 if (openCount > 0)
                 {
-                    ed.WriteMessage($"\n(Se ignoraron {openCount} polilíneas abiertas que no estaban cerradas.)");
+                    ed.WriteMessage($"\n(Se ignoraron {openCount} polilíneas que no estaban cerradas.)");
                 }
             }
             return finalCollection;
@@ -314,8 +300,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v53' (NUEVA v53) ---
-        private static LayoutResult RunLayout_v53(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v54' (MODIFICADO TOTALMENTE v54) ---
+        private static LayoutResult RunLayout_v54(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
             {
@@ -323,68 +309,120 @@ namespace Civil3D_Phase1
                 TrackersToDraw = new List<Polyline>()
             };
 
-            // 1. Abrir las geometrías y convertirlas a listas de vértices 2D (WCS)
-            List<Point2d> netAreaVertices = new List<Point2d>();
-            List<List<Point2d>> affectionVerticesList = new List<List<Point2d>>();
-            Extents3d totalExtents = new Extents3d();
+            // Contenedor para nuestra 'Region' de validez final
+            Region validityRegion = null;
+            Extents3d totalExtents;
 
+            // --- 1. CREAR EL MAPA DE VALIDEZ (REGION) ---
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
-                if (netAreaCurve == null) return null; // Error
-                totalExtents = netAreaCurve.GeometricExtents;
-
-                // --- LLAMA A LA NUEVA LÓGICA v53 ---
-                netAreaVertices = GetTessellatedVertices_v53(netAreaCurve);
-
-                foreach (ObjectId id in affectionIds)
+                try
                 {
-                    Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
-                    if (affCurve != null)
+                    // 1a. Crear la Región base desde el Área Neta
+                    Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
+                    if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); return null; }
+                    totalExtents = netAreaCurve.GeometricExtents; // Obtener límites para el bucle
+                    
+                    DBObjectCollection netCurveColl = new DBObjectCollection();
+                    netCurveColl.Add(netAreaCurve);
+                    
+                    DBObjectCollection regionColl = Region.CreateFromCurves(netCurveColl);
+                    if (regionColl.Count == 0) { ed.WriteMessage("\nERROR: No se pudo crear la Región del Área Neta (¿curva inválida?)."); return null; }
+                    validityRegion = regionColl[0] as Region;
+                    
+                    // 1b. Restar (Subtract) todas las afecciones
+                    foreach (ObjectId affId in affectionIds)
                     {
-                        // --- LLAMA A LA NUEVA LÓGICA v53 ---
-                        affectionVerticesList.Add(GetTessellatedVertices_v53(affCurve));
+                        Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
+                        if (affCurve == null) continue;
+
+                        DBObjectCollection affCurveColl = new DBObjectCollection();
+                        affCurveColl.Add(affCurve);
+                        
+                        DBObjectCollection affRegionColl = Region.CreateFromCurves(affCurveColl);
+                        if (affRegionColl.Count > 0)
+                        {
+                            Region affRegion = affRegionColl[0] as Region;
+                            // Esta es la operación clave:
+                            validityRegion.BooleanOperation(BooleanOperationType.Subtract, affRegion);
+                        }
+                    }
+
+                    // No necesitamos 'Commit', solo usamos la 'validityRegion' en memoria
+                    // tr.Abort(); // Abortar la transacción al salir del 'using'
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\nERROR CRÍTICO al crear Regiones (v54): {ex.Message}");
+                    return null; // Fallo total
+                }
+                finally
+                {
+                    if (validityRegion != null && !validityRegion.IsDisposed)
+                    {
+                         // No hacemos dispose aquí, la usaremos fuera de la transacción
+                         // Haremos dispose de ella al final
                     }
                 }
-                tr.Abort();
+            } // La transacción se cierra aquí (y se Aborta)
+
+
+            // --- 2. ITERAR LA GRILLA (usando la Región) ---
+            if (validityRegion == null)
+            {
+                ed.WriteMessage("\nERROR: La Región de Validez es nula. Cancelando.");
+                return null;
             }
 
-            if (netAreaVertices.Count == 0) return null;
-
-            // 2. Iterar la Grilla (N-S)
-            // Bucle E-O (X) - Filas
-            for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
+            try
             {
-                // Bucle N-S (Y) - Trackers
-                double y = totalExtents.MinPoint.Y;
-                while (y < totalExtents.MaxPoint.Y)
+                // Bucle E-O (X) - Filas
+                for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
                 {
-                    // 3. Probar Tracker Largo
-                    Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
-
-                    // 4. Test de Colisión (4-ESQUINAS)
-                    if (IsTrackerValid_4Corners_v45(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                    // Bucle N-S (Y) - Trackers
+                    double y = totalExtents.MinPoint.Y;
+                    while (y < totalExtents.MaxPoint.Y)
                     {
-                        layout.LongTrackers++;
-                        layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
-                        y += tracker.longitud_largo + offsetNS; // <-- USA EL OFFSET FIJO
-                    }
-                    else
-                    {
-                        // 5. Si el largo no cabe, probar corto
-                        if (tracker.longitud_corto > 0.01)
+                        // 3. Probar Tracker Largo
+                        Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
+                        
+                        // 4. Test de Colisión NATIVO (v54)
+                        if (IsTrackerValid_4Corners_v54(validityRegion, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                         {
-                            centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                            if (IsTrackerValid_4Corners_v45(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
-                            {
-                                layout.ShortTrackers++;
-                                layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
-                                y += tracker.longitud_corto + offsetNS; // <-- USA EL OFFSET FIJO
-                            }
-                            else { y += 1.0; } // Avanza un poco para evitar bucles infinitos
+                            layout.LongTrackers++;
+                            layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
+                            y += tracker.longitud_largo + offsetNS; 
                         }
-                        else { y += 1.0; } // Avanza un poco para evitar bucles infinitos
+                        else
+                        {
+                            // 5. Si el largo no cabe, probar corto
+                            if (tracker.longitud_corto > 0.01)
+                            {
+                                centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
+                                if (IsTrackerValid_4Corners_v54(validityRegion, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                                {
+                                    layout.ShortTrackers++;
+                                    layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
+                                    y += tracker.longitud_corto + offsetNS;
+                                }
+                                else { y += 1.0; } // Avanza un poco
+                            }
+                            else { y += 1.0; } // Avanza un poco
+                        }
                     }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v54): {ex.Message}");
+                 return null;
+            }
+            finally
+            {
+                // Limpiar la Región que creamos
+                if(validityRegion != null && !validityRegion.IsDisposed)
+                {
+                    validityRegion.Dispose();
                 }
             }
 
@@ -392,130 +430,37 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v45' (Sin cambios) ---
-        private static bool IsTrackerValid_4Corners_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
+        // --- 'IsTrackerValid_4Corners_v54' (NUEVA FUNCIÓN v54) ---
+        //
+        // Esta función reemplaza a 'IsPointValid_v45'.
+        // Utiliza el método nativo 'Region.Contains()' de AutoCAD para la colisión.
+        // NOTA: 'Region.Contains' necesita Point3d (Z=0).
+        //
+        private static bool IsTrackerValid_4Corners_v54(Region validRegion, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
+            
+            // Usamos Point3d para la comprobación nativa
+            // (Asumimos Z=0 para todo el layout 2D)
+            Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
+            Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
+            Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
+            Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
 
-            // Usamos Point2d para la comprobación 2D pura
-            Point2d p1 = new Point2d(center.X - halfWid, center.Y - halfLen); // Abajo-Izquierda
-            Point2d p2 = new Point2d(center.X + halfWid, center.Y - halfLen); // Abajo-Derecha
-            Point2d p3 = new Point2d(center.X + halfWid, center.Y + halfLen); // Arriba-Derecha
-            Point2d p4 = new Point2d(center.X - halfWid, center.Y + halfLen); // Arriba-Izquierda
+            // Tolerancia para la comprobación.
+            // Esto es crucial para errores de precisión de flotantes.
+            Tolerance tol = new Tolerance(1e-6, 1e-6); // 0.000001 metros
 
-            if (!IsPointValid_v45(netArea, affections, p1)) return false;
-            if (!IsPointValid_v45(netArea, affections, p2)) return false;
-            if (!IsPointValid_v45(netArea, affections, p3)) return false;
-            if (!IsPointValid_v45(netArea, affections, p4)) return false;
+            //
+            // --- ESTA ES LA LÓGICA DE COLISIÓN CORREGIDA ---
+            //
+            if (!validRegion.Contains(p1, tol)) return false;
+            if (!validRegion.Contains(p2, tol)) return false;
+            if (!validRegion.Contains(p3, tol)) return false;
+            if (!validRegion.Contains(p4, tol)) return false;
 
-            return true; // Todas las esquinas están bien
-        }
-
-        // --- 'IsPointValid_v45' (Sin cambios) ---
-        private static bool IsPointValid_v45(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
-        {
-            // Condición 1: Debe estar DENTRO del área neta
-            if (netArea.Count == 0 || !IsPointInsidePoly_v45(netArea, testPoint)) { return false; }
-
-            // Condición 2: NO debe estar dentro de NINGUNA afección
-            foreach (List<Point2d> affPoly in affections)
-            {
-                if (affPoly.Count > 0 && IsPointInsidePoly_v45(affPoly, testPoint)) { return false; }
-            }
-
-            return true; // Pasó ambas pruebas
-        }
-
-        // --- 'IsPointInsidePoly_v45' (Sin cambios) ---
-        // Algoritmo Ray-Casting
-        private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
-        {
-            try
-            {
-                int crossings = 0;
-                double testX = testPoint.X;
-                double testY = testPoint.Y;
-
-                for (int i = 0; i < vertices.Count; i++)
-                {
-                    Point2d p1 = vertices[i];
-                    Point2d p2 = vertices[(i + 1) % vertices.Count]; // Siguiente o el primero
-
-                    double p1_X = p1.X;
-                    double p1_Y = p1.Y;
-                    double p2_X = p2.X;
-                    double p2_Y = p2.Y;
-
-                    if (((p1_Y <= testY && p2_Y > testY) || (p1_Y > testY && p2_Y <= testY)))
-                    {
-                        if (p2_Y - p1_Y == 0) continue;
-
-                        double x_intercept = (p2_X - p1_X) * (testY - p1_Y) / (p2_Y - p1_Y) + p1_X;
-                        if (testX < x_intercept)
-                        {
-                            crossings++;
-                        }
-                    }
-                }
-                return (crossings % 2 == 1); // Impar = Dentro
-            }
-            catch (System.Exception ex)
-            {
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en IsPointInsidePoly_v45: {ex.Message}");
-                return false;
-            }
-        }
-
-        // --- 'GetTessellatedVertices_v53' (MODIFICADA v53) ---
-        //
-        // ESTA ES LA FUNCIÓN CORREGIDA
-        // Se ha eliminado el 'catch' que contenía el 'fallback' erróneo (v46).
-        // Ahora, si 'GetPointAtDist' falla, simplemente devolverá una lista vacía,
-        // lo que es más seguro que devolver datos incorrectos.
-        //
-        private static List<Point2d> GetTessellatedVertices_v53(Curve curve)
-        {
-            List<Point2d> vertices = new List<Point2d>();
-            if (curve == null) return vertices;
-
-            try
-            {
-                // Definimos la precisión de la conversión de curva a polígono.
-                const double TESSELLATION_DISTANCE = 0.5; // 0.5m de precisión
-
-                // GetDistanceAtParameter y GetPointAtDist son los métodos compatibles
-                double totalLength = curve.GetDistanceAtParameter(curve.EndParam);
-                double currentDistance = 0;
-
-                while (currentDistance < totalLength)
-                {
-                    Point3d pt3d = curve.GetPointAtDist(currentDistance);
-                    vertices.Add(new Point2d(pt3d.X, pt3d.Y));
-                    currentDistance += TESSELLATION_DISTANCE;
-                }
-
-                // Asegurarnos de añadir el último punto exacto
-                Point3d endPt = curve.GetPointAtDist(totalLength);
-                vertices.Add(new Point2d(endPt.X, endPt.Y));
-            }
-            catch (System.Exception ex)
-            {
-                // ¡NO USAR FALLBACK! El fallback era el bug.
-                // Si la teselación falla, es mejor fallar (devolver lista vacía)
-                // que dar un resultado incorrecto.
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\n¡ERROR CRÍTICO al teselar curva (v53)!: {ex.Message}.");
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nLa geometría con ID {curve.ObjectId} no se pudo procesar. El layout puede ser incorrecto.");
-                vertices.Clear(); // Devuelve una lista vacía para que la colisión falle
-            }
-
-            // Asegurarnos de que el polígono esté "cerrado" para el algoritmo de Ray-Casting
-            if (vertices.Count > 0 && vertices[0] != vertices[vertices.Count - 1])
-            {
-                vertices.Add(vertices[0]);
-            }
-
-            return vertices;
+            return true; // Todas las esquinas están DENTRO de la Región válida
         }
 
 
@@ -528,10 +473,7 @@ namespace Civil3D_Phase1
             Polyline rect = new Polyline();
             rect.SetDatabaseDefaults();
 
-            if (layer != "temp")
-            {
-                rect.Layer = layer;
-            }
+            if (layer != "temp") { rect.Layer = layer; }
 
             rect.AddVertexAt(0, new Point2d(center.X - halfWid, center.Y - halfLen), 0, 0, 0);
             rect.AddVertexAt(1, new Point2d(center.X + halfWid, center.Y - halfLen), 0, 0, 0);
@@ -551,7 +493,6 @@ namespace Civil3D_Phase1
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
-                
                 {
                     btr.AppendEntity(trackerPoly);
                     tr.AddNewlyCreatedDBObject(trackerPoly, true);
@@ -560,5 +501,12 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
         }
+
+        // --- FUNCIONES ANTIGUAS/ERRÓNEAS (ELIMINADAS en v54) ---
+        //
+        // private static bool IsPointValid_v45(...) {...}
+        // private static bool IsPointInsidePoly_v45(...) {...}
+        // private static List<Point2d> GetTessellatedVertices_v53(...) {...}
+        //
     }
 }
