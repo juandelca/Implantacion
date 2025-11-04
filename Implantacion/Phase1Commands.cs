@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v57 - Método 'MPolygon' Definitivo) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v58 - 'Hatch' API Corregida) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -116,7 +116,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v57) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v58) ---
             ed.WriteMessage("\nCreando capas de salida...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -125,13 +125,13 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método MPolygon v57) ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Hatch v58) ---");
 
-            LayoutResult finalLayout = RunLayout_v57(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            LayoutResult finalLayout = RunLayout_v58(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
             {
-                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v57).");
+                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v58).");
                 return;
             }
 
@@ -154,7 +154,7 @@ namespace Civil3D_Phase1
             DrawFinalLayout(db, finalLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito!");
 
-            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v57) ---");
+            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v58) ---");
         }
 
         // --- Función Auxiliar 1 (SelectPolyline, v56) ---
@@ -297,8 +297,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v57' (MODIFICADO TOTALMENTE v57) ---
-        private static LayoutResult RunLayout_v57(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v58' (MODIFICADO v58) ---
+        private static LayoutResult RunLayout_v58(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
             {
@@ -306,109 +306,111 @@ namespace Civil3D_Phase1
                 TrackersToDraw = new List<Polyline>()
             };
 
-            // MPolygon debe ser creado y eliminado
-            MPolygon validityMPolygon = new MPolygon();
+            Hatch validityHatch = new Hatch();
+            Transaction tr = db.TransactionManager.StartTransaction();
             Extents3d totalExtents;
             
-            // Usamos una transacción para leer las curvas y construir el MPolygon
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            try
             {
-                try
-                {
-                    // --- 1. CREAR EL MAPA DE VALIDEZ (MPolygon) ---
-                    
-                    // 1a. Añadir el contorno exterior (Área Neta)
-                    Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
-                    if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); tr.Abort(); validityMPolygon.Dispose(); return null; }
-                    totalExtents = netAreaCurve.GeometricExtents; // Obtener límites
-                    
-                    // Añadimos la curva al MPolygon
-                    validityMPolygon.AppendLoop(netAreaCurve);
+                // --- 1. CREAR EL MAPA DE VALIDEZ (HATCH) ---
+                
+                // 1a. Configurar el Hatch
+                validityHatch.SetDatabaseDefaults();
+                
+                // --- CAMBIO v58 (Arreglo de v56 Error 1) ---
+                // 'PatternName' es read-only. Se usa 'SetHatchPattern'.
+                validityHatch.SetHatchPattern(HatchPatternType.PreDefined, "SOLID");
+                
+                validityHatch.HatchStyle = HatchStyle.Normal; // Detectar islas
+                validityHatch.Normal = new Vector3d(0, 0, 1); // Plano XY
 
-                    // 1b. Añadir TODAS las afecciones (islas)
-                    foreach (ObjectId affId in affectionIds)
+                // 1b. Añadir el contorno exterior (Área Neta)
+                Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
+                if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); tr.Abort(); validityHatch.Dispose(); return null; }
+                totalExtents = netAreaCurve.GeometricExtents; // Obtener límites para el bucle
+                
+                ObjectIdCollection outerLoop = new ObjectIdCollection();
+                outerLoop.Add(netAreaId);
+                validityHatch.AppendLoop(HatchLoopTypes.External, outerLoop);
+
+                // 1c. Añadir TODAS las afecciones (islas)
+                if (affectionIds.Count > 0)
+                {
+                    validityHatch.AppendLoop(HatchLoopTypes.Default, affectionIds);
+                }
+
+                // 1d. Calcular el sombreado (con sus islas) en memoria
+                validityHatch.EvaluateHatch(true);
+                
+
+                // --- 2. ITERAR LA GRILLA (usando el Hatch) ---
+                
+                // Bucle E-O (X) - Filas
+                for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
+                {
+                    // Bucle N-S (Y) - Trackers
+                    double y = totalExtents.MinPoint.Y;
+                    while (y < totalExtents.MaxPoint.Y)
                     {
-                        Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
-                        if (affCurve != null)
+                        // 3. Probar Tracker Largo
+                        Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
+                        
+                        // 4. Test de Colisión NATIVO (v58)
+                        if (IsTrackerValid_4Corners_v58(validityHatch, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                         {
-                            validityMPolygon.AppendLoop(affCurve);
+                            layout.LongTrackers++;
+                            layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
+                            y += tracker.longitud_largo + offsetNS; 
                         }
-                    }
-                    
-                    // --- 2. ITERAR LA GRILLA (usando el MPolygon) ---
-                    
-                    // Bucle E-O (X) - Filas
-                    for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
-                    {
-                        // Bucle N-S (Y) - Trackers
-                        double y = totalExtents.MinPoint.Y;
-                        while (y < totalExtents.MaxPoint.Y)
+                        else
                         {
-                            // 3. Probar Tracker Largo
-                            Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
-                            
-                            // 4. Test de Colisión NATIVO (v57)
-                            if (IsTrackerValid_4Corners_v57(validityMPolygon, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                            // 5. Si el largo no cabe, probar corto
+                            if (tracker.longitud_corto > 0.01)
                             {
-                                layout.LongTrackers++;
-                                layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
-                                y += tracker.longitud_largo + offsetNS; 
-                            }
-                            else
-                            {
-                                // 5. Si el largo no cabe, probar corto
-                                if (tracker.longitud_corto > 0.01)
+                                centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
+                                if (IsTrackerValid_4Corners_v58(validityHatch, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                                 {
-                                    centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                                    if (IsTrackerValid_4Corners_v57(validityMPolygon, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
-                                    {
-                                        layout.ShortTrackers++;
-                                        layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
-                                        y += tracker.longitud_corto + offsetNS;
-                                    }
-                                    else { y += 1.0; } // Avanza un poco
+                                    layout.ShortTrackers++;
+                                    layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
+                                    y += tracker.longitud_corto + offsetNS;
                                 }
                                 else { y += 1.0; } // Avanza un poco
                             }
+                            else { y += 1.0; } // Avanza un poco
                         }
                     }
                 }
-                catch (System.Exception ex)
-                {
-                     ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v57): {ex.Message}");
-                     layout = null; // Marcar como fallido
-                }
-                finally
-                {
-                    // --- 3. LIMPIEZA ---
-                    // Abortamos la transacción. El MPolygon solo vivió en memoria.
-                    tr.Abort();
-                    // Destruimos el MPolygon de la memoria
-                    if(validityMPolygon != null && !validityMPolygon.IsDisposed)
-                    {
-                        validityMPolygon.Dispose();
-                    }
-                }
-            } // Fin del using (Transaction)
-
-            if (layout != null)
-            {
-                layout.TotalTrackers = layout.LongTrackers + layout.ShortTrackers;
             }
+            catch (System.Exception ex)
+            {
+                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v58): {ex.Message}");
+                 return null; // El 'finally' se ejecutará
+            }
+            finally
+            {
+                // --- 3. LIMPIEZA ---
+                tr.Abort();
+                if(validityHatch != null && !validityHatch.IsDisposed)
+                {
+                    validityHatch.Dispose();
+                }
+            }
+
+            layout.TotalTrackers = layout.LongTrackers + layout.ShortTrackers;
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v57' (NUEVA FUNCIÓN v57) ---
+        // --- 'IsTrackerValid_4Corners_v58' (NUEVA FUNCIÓN v58) ---
         //
-        // Esta función reemplaza a todas las anteriores.
-        // Utiliza el método nativo 'MPolygon.IsPointInside()'.
+        // Esta función reemplaza a 'IsPointInHatch' (que no existía).
+        // Utiliza el método nativo 'Hatch.GetPointContainment()'.
         //
-        private static bool IsTrackerValid_4Corners_v57(MPolygon validMPoly, Point3d center, double length, double width)
+        private static bool IsTrackerValid_4Corners_v58(Hatch validHatch, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
             
-            // Usamos Point3d para la comprobación nativa
+            // Puntos 3D
             Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
             Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
             Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
@@ -417,15 +419,24 @@ namespace Civil3D_Phase1
             // Tolerancia
             Tolerance tol = new Tolerance(1e-6, 1e-6);
 
-            //
-            // --- LÓGICA DE COLISIÓN (v57) ---
-            // 'IsPointInside' devuelve true si el punto está en una zona rellenada
-            // y false si está fuera O si está en una isla (afección).
-            //
-            if (!validMPoly.IsPointInside(p1, tol)) return false;
-            if (!validMPoly.IsPointInside(p2, tol)) return false;
-            if (!validMPoly.IsPointInside(p3, tol)) return false;
-            if (!validMPoly.IsPointInside(p4, tol)) return false;
+            try
+            {
+                //
+                // --- LÓGICA DE COLISIÓN (v58) ---
+                // 'GetPointContainment' necesita Point2d.
+                // Comprobamos si el resultado es 'PointContainment.Inside'.
+                //
+                if (validHatch.GetPointContainment(new Point2d(p1.X, p1.Y), tol) != PointContainment.Inside) return false;
+                if (validHatch.GetPointContainment(new Point2d(p2.X, p2.Y), tol) != PointContainment.Inside) return false;
+                if (validHatch.GetPointContainment(new Point2d(p3.X, p3.Y), tol) != PointContainment.Inside) return false;
+                if (validHatch.GetPointContainment(new Point2d(p4.X, p4.Y), tol) != PointContainment.Inside) return false;
+            }
+            catch (System.Exception ex)
+            {
+                // Capturar un error aquí si GetPointContainment falla
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en GetPointContainment: {ex.Message}");
+                return false;
+            }
 
             return true; // Todas las esquinas están DENTRO
         }
