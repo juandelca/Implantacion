@@ -8,7 +8,7 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// --- NUEVO IMPORT PARA EL MÉTODO HATCH ---
+// Este 'using' es el que causa el conflicto, pero lo necesitamos.
 using Autodesk.AutoCAD.GraphicsInterface;
 
 namespace Civil3D_Phase1
@@ -29,12 +29,12 @@ namespace Civil3D_Phase1
 
     public class LayoutResult
     {
-        // ... (Esta clase no cambia) ...
         public double OffsetNS { get; set; } 
         public int TotalTrackers { get; set; }
         public int LongTrackers { get; set; }
         public int ShortTrackers { get; set; }
-        public List<Polyline> TrackersToDraw { get; set; }
+        // --- CORRECCIÓN v49: Nombre completo ---
+        public List<Autodesk.AutoCAD.DatabaseServices.Polyline> TrackersToDraw { get; set; }
     }
 
 
@@ -48,7 +48,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v48 - Colisión por Hatch) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v49 - Corrección Ambigüedad Polyline) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -102,7 +102,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (Sin cambios, v46) ---
+            // --- PASO 3: Selección de Geometría (MODIFICADO v49) ---
             
             // 3a. Seleccionar Parcela
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D y CERRADA):", true); // <-- Exigir cerrada
@@ -127,7 +127,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v48) ---
+            // --- PASO 5: Generación de Layout (Sin cambios, v48) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -139,7 +139,6 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método Hatch) ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN v48 ---
             LayoutResult finalLayout = RunLayout_v48(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
@@ -170,12 +169,13 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
         }
 
-        // --- Función Auxiliar 1 (Sin cambios, v46) ---
+        // --- Función Auxiliar 1 (v49 - CORREGIDA) ---
         private static ObjectId SelectPolyline(Editor ed, string message, bool requireClosed)
         {
             PromptEntityOptions peo = new PromptEntityOptions(message);
             peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea 2D.");
-            peo.AddAllowedClass(typeof(Polyline), true); 
+            // --- CORRECCIÓN v49: Nombre completo ---
+            peo.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true); 
             peo.AddAllowedClass(typeof(Polyline2d), true); 
 
             PromptEntityResult per = ed.GetEntity(peo);
@@ -201,6 +201,7 @@ namespace Civil3D_Phase1
         }
 
         // --- Función Auxiliar 2 (Sin cambios, v47) ---
+        // (No hay ambigüedad aquí porque "POLYLINE" es un string)
         private static ObjectIdCollection SelectMultiplePolylines(Database db, Editor ed, string message)
         {
             ObjectIdCollection finalCollection = new ObjectIdCollection();
@@ -308,13 +309,14 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunLayout_v48' (MODIFICADA) ---
+        // --- 'RunLayout_v48' (Sin cambios) ---
         private static LayoutResult RunLayout_v48(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
             { 
                 OffsetNS = offsetNS, 
-                TrackersToDraw = new List<Polyline>() 
+                // --- CORRECCIÓN v49: Nombre completo ---
+                TrackersToDraw = new List<Autodesk.AutoCAD.DatabaseServices.Polyline>() 
             };
 
             // 1. Abrir las geometrías y obtener sus extents
@@ -368,7 +370,7 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- FUNCIÓN 'IsTrackerValid_4Corners_v48' (MODIFICADA) ---
+        // --- 'IsTrackerValid_4Corners_v48' (Sin cambios) ---
         private static bool IsTrackerValid_4Corners_v48(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
@@ -393,7 +395,7 @@ namespace Civil3D_Phase1
             return true; // Todas las esquinas están bien
         }
 
-        // --- FUNCIÓN 'IsPointValid_v48' (MODIFICADA) ---
+        // --- 'IsPointValid_v48' (Sin cambios) ---
         private static bool IsPointValid_v48(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
@@ -408,80 +410,62 @@ namespace Civil3D_Phase1
             return true; // Pasó ambas pruebas
         }
         
-        // --- FUNCIÓN 'IsPointInsidePoly_Hatch_v48' (NUEVA) ---
-        /// <summary>
-        /// Comprobación de colisión 100% fiable usando un Hatch temporal.
-        /// </summary>
+        // --- 'IsPointInsidePoly_Hatch_v48' (Sin cambios) ---
         private static bool IsPointInsidePoly_Hatch_v48(Transaction tr, ObjectId polyId, Point3d testPoint)
         {
             Hatch hatch = null;
             try
             {
-                // 1. Abrir la polilínea CERRADA
                 Entity poly = (Entity)tr.GetObject(polyId, OpenMode.ForRead);
 
-                // 2. Crear un Hatch en memoria
                 hatch = new Hatch();
                 hatch.SetDatabaseDefaults();
                 hatch.PatternScale = 1.0;
                 hatch.SetHatchPattern(HatchPatternType.PreDefined, "SOLID");
                 
-                // 3. Añadir la polilínea como bucle exterior
                 ObjectIdCollection loopIds = new ObjectIdCollection();
                 loopIds.Add(polyId);
                 hatch.AppendLoop(HatchLoopTypes.Outermost, loopIds);
 
-                // 4. Generar el sombreado
                 hatch.EvaluateHatch(true);
 
-                // 5. La comprobación fiable
-                // Proyecta el punto al plano del hatch y comprueba
                 Point2d testPoint2d;
                 hatch.IsPointInHatch(testPoint, out testPoint2d); 
                 
-                // IsPointInHatch devuelve un bool, pero es más fiable comprobar
-                // el "Bulge" (curvatura) en el punto 2D de salida.
-                // Si el punto está DENTRO, BulgeAt devolverá 0.
-                // Si está FUERA, lanzará una excepción (eOutsideHatch).
-                
-                // Comprobación de si el punto está dentro.
                 hatch.BulgeAt(testPoint2d);
 
-                // Si no ha lanzado excepción, está DENTRO.
-                hatch.Dispose(); // Limpiar el hatch temporal
+                hatch.Dispose(); 
                 return true;
             }
             catch (Autodesk.AutoCAD.DatabaseServices.Exception ex)
             {
-                // Si el error es 'eOutsideHatch', el punto está FUERA (es válido para una afección)
                 if (ex.ErrorStatus == ErrorStatus.OutsideHatch)
                 {
                     if (hatch != null) hatch.Dispose();
                     return false; // Está FUERA
                 }
                 
-                // Otro error
                 if (hatch != null) hatch.Dispose();
-                return false; // Asumir fuera por seguridad
+                return false; 
             }
             catch (System.Exception)
             {
-                // Error general
                 if (hatch != null) hatch.Dispose();
-                return false; // Asumir fuera por seguridad
+                return false; 
             }
         }
         
         // --- 'Get2DVertices_v45' (ELIMINADO - ya no se usa) ---
         // --- 'IsPointInsidePoly_v45' (ELIMINADO - ya no se usa) ---
 
-        // --- 'CreateTrackerPolyline_NS' (Sin cambios) ---
-        private static Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
+        // --- 'CreateTrackerPolyline_NS' (v49 - CORREGIDA) ---
+        private static Autodesk.AutoCAD.DatabaseServices.Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
         {
             double halfLen = length / 2.0; // Y-axis
             double halfWid = width / 2.0;  // X-axis
             
-            Polyline rect = new Polyline();
+            // --- CORRECCIÓN v49: Nombre completo ---
+            Autodesk.AutoCAD.DatabaseServices.Polyline rect = new Autodesk.AutoCAD.DatabaseServices.Polyline();
             rect.SetDatabaseDefaults();
             rect.Layer = layer;
             
@@ -494,7 +478,7 @@ namespace Civil3D_Phase1
             return rect;
         }
         
-        // --- 'DrawFinalLayout' (Sin cambios, v40) ---
+        // --- 'DrawFinalLayout' (v49 - CORREGIDA) ---
         private static void DrawFinalLayout(Database db, LayoutResult winningLayout)
         {
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -502,7 +486,8 @@ namespace Civil3D_Phase1
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
-                foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
+                // --- CORRECCIÓN v49: Nombre completo ---
+                foreach (Autodesk.AutoCAD.DatabaseServices.Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
                     btr.AppendEntity(trackerPoly);
                     tr.AddNewlyCreatedDBObject(trackerPoly, true);
