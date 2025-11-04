@@ -28,7 +28,7 @@ namespace Civil3D_Phase1
     public class LayoutResult
     {
         // ... (Esta clase no cambia) ...
-        public double OffsetEO { get; set; }
+        public double OffsetEO { get; set; } // Lo mantendremos como 'Offset', aunque ahora será N-S
         public int TotalTrackers { get; set; }
         public int LongTrackers { get; set; }
         public int ShortTrackers { get; set; }
@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v36 - Creación de Capas Corregida) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v37 - Layout N-S y 4-Esquinas) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -63,7 +63,7 @@ namespace Civil3D_Phase1
             catch (System.Exception) { /* ... error ... */ return; }
 
 
-            // --- PASO 2: Solicitar Inputs de Layout (Sin cambios) ---
+            // --- PASO 2: Solicitar Inputs de Layout (MODIFICADO) ---
             
             // 2a. Seleccionar Tracker
             PromptKeywordOptions pkoTracker = new PromptKeywordOptions("\nSeleccione el id_tracker de la biblioteca:");
@@ -73,16 +73,17 @@ namespace Civil3D_Phase1
             if (prTracker.Status != PromptStatus.OK) { return; }
             string selectedTrackerId = prTracker.StringResult;
             TrackerModel selectedTracker = trackerLibrary.Find(t => t.id_tracker == selectedTrackerId);
-            ed.WriteMessage($"\nTracker '{selectedTracker.id_tracker}' seleccionado. (Ancho N-S: {selectedTracker.ancho_huella_ns}m)");
+            ed.WriteMessage($"\nTracker '{selectedTracker.id_tracker}' seleccionado. (Ancho E-O: {selectedTracker.ancho_huella_ns}m)");
 
-            // 2b. Pedir Paso Libre N-S
-            PromptDoubleOptions pdoPaso = new PromptDoubleOptions("\nIntroduzca el paso libre N-S (distancia fin-a-inicio) en metros:");
-            pdoPaso.AllowNegative = false; pdoPaso.AllowZero = false; pdoPaso.DefaultValue = 3.0;
-            PromptDoubleResult prPaso = ed.GetDouble(pdoPaso);
-            if (prPaso.Status != PromptStatus.OK) { return; }
-            double pasoLibreNS = prPaso.Value;
-            double pitchEjeAEje = selectedTracker.ancho_huella_ns + pasoLibreNS;
-            ed.WriteMessage($"\nPaso libre N-S: {pasoLibreNS}m. Pitch N-S Eje-a-Eje calculado: {pitchEjeAEje}m");
+            // 2b. Pedir Pitch Eje-a-Eje (E-O) <-- CAMBIADO
+            PromptDoubleOptions pdoPitch = new PromptDoubleOptions("\nIntroduzca el Pitch Eje-a-Eje (E-O) en metros:");
+            pdoPitch.AllowNegative = false; pdoPitch.AllowZero = false;
+            pdoPitch.DefaultValue = 10.0; // Valor por defecto 10m
+
+            PromptDoubleResult prPitch = ed.GetDouble(pdoPitch);
+            if (prPitch.Status != PromptStatus.OK) { return; }
+            double pitchEO = prPitch.Value;
+            ed.WriteMessage($"\nPitch E-O seleccionado: {pitchEO}m");
 
             // 2c. Pedir Retranqueo (Setback)
             PromptDoubleOptions pdoSetback = new PromptDoubleOptions("\nIntroduzca el retranqueo (setback) de la parcela en metros:");
@@ -118,9 +119,8 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Bucle de Optimización (v36) ---
+            // --- PASO 5: Bucle de Optimización (v37) ---
             
-            // --- CORRECCIÓN v36: Crear capas ANTES del bucle ---
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -128,11 +128,11 @@ namespace Civil3D_Phase1
                 CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0)); // Naranja
                 tr.Commit();
             }
-            // --- FIN DE LA CORRECCIÓN ---
 
             ed.WriteMessage("\n--- Iniciando Paso 5: Bucle de Optimización (100 iteraciones) ---");
             
-            LayoutResult winningLayout = RunOptimizationLoop_v35(db, netAreaId, affectionIds, selectedTracker, pitchEjeAEje);
+            // --- LLAMADA A LA NUEVA FUNCIÓN v37 ---
+            LayoutResult winningLayout = RunOptimizationLoop_v37(db, netAreaId, affectionIds, selectedTracker, pitchEO);
             
             if (winningLayout == null)
             {
@@ -148,13 +148,13 @@ namespace Civil3D_Phase1
 
             ed.WriteMessage("--- Bucle de Optimización Terminado ---");
             ed.WriteMessage("\n--- LAYOUT GANADOR SELECCIONADO ---");
-            ed.WriteMessage($"Offset (E-O): {winningLayout.OffsetEO:F2}m");
+            ed.WriteMessage($"Offset (N-S): {winningLayout.OffsetEO:F2}m"); // <-- Log actualizado
             ed.WriteMessage($"Total Trackers: {winningLayout.TotalTrackers}");
             ed.WriteMessage($"Trackers Largos ({selectedTracker.longitud_largo}m): {winningLayout.LongTrackers}");
             ed.WriteMessage($"Trackers Cortos ({selectedTracker.longitud_corto}m): {winningLayout.ShortTrackers}");
 
 
-            // --- PASO 6: Dibujado Final ---
+            // --- PASO 6: Dibujado Final (Sin cambios) ---
             ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout Ganador ---");
             DrawFinalLayout(db, winningLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito en capas 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'!");
@@ -248,8 +248,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunOptimizationLoop_v35' (Sin cambios) ---
-        private static LayoutResult RunOptimizationLoop_v35(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchNS)
+        // --- FUNCIÓN 'RunOptimizationLoop' (v37 - REESCRITA) ---
+        private static LayoutResult RunOptimizationLoop_v37(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO)
         {
             LayoutResult bestLayout = new LayoutResult { TotalTrackers = 0 };
 
@@ -260,61 +260,62 @@ namespace Civil3D_Phase1
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                // Abrir la polilínea magenta
                 netAreaPoly = tr.GetObject(netAreaId, OpenMode.ForRead) as Polyline;
-                if (netAreaPoly == null) return null; // Error grave
+                if (netAreaPoly == null) return null; 
                 totalExtents = netAreaPoly.GeometricExtents;
                 
-                // Abrir todas las polilíneas de afecciones
                 foreach (ObjectId id in affectionIds)
                 {
                     Polyline poly = tr.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (poly != null) affectionPolys.Add(poly);
                 }
-                tr.Abort(); // Solo leemos
+                tr.Abort(); 
             } 
 
-            // 2. El Bucle de 100 Iteraciones
+            // 2. El Bucle de 100 Iteraciones (AHORA OPTIMIZA N-S)
             for (int i = 0; i < 100; i++)
             {
-                double currentOffsetEO = 0.1 + (i * 0.1); 
+                double currentOffsetNS = 0.1 + (i * 0.1); // Optimiza Offset N-S de 0.1 a 10.0
                 LayoutResult currentLayout = new LayoutResult 
                 { 
-                    OffsetEO = currentOffsetEO, 
+                    OffsetEO = currentOffsetNS, // Guardamos el Offset N-S
                     TrackersToDraw = new List<Polyline>() 
                 };
 
-                // 3. Iterar la Grilla
-                for (double y = totalExtents.MinPoint.Y; y < totalExtents.MaxPoint.Y; y += pitchNS)
+                // 3. Iterar la Grilla (NUEVA LÓGICA N-S)
+                // Bucle E-O (X) - Filas
+                for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
                 {
-                    double x = totalExtents.MinPoint.X;
-                    while (x < totalExtents.MaxPoint.X)
+                    // Bucle N-S (Y) - Trackers
+                    double y = totalExtents.MinPoint.Y;
+                    while (y < totalExtents.MaxPoint.Y)
                     {
                         // 4. Probar Tracker Largo
-                        Point3d centerPt = new Point3d(x + (tracker.longitud_largo / 2.0), y + (tracker.ancho_huella_ns / 2.0), 0);
+                        // El centro se calcula con ANCHO en X y LARGO en Y
+                        Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                         
-                        // 5. Test de Colisión (v35)
-                        if (IsPointValid(netAreaPoly, affectionPolys, centerPt))
+                        // 5. Test de Colisión (NUEVA LÓGICA 4-ESQUINAS)
+                        if (IsTrackerValid_4Corners(netAreaPoly, affectionPolys, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                         {
                             currentLayout.LongTrackers++;
-                            currentLayout.TrackersToDraw.Add(CreateTrackerPolyline(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
-                            x += tracker.longitud_largo + currentOffsetEO;
+                            currentLayout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
+                            y += tracker.longitud_largo + currentOffsetNS; // Avanzar N-S
                         }
                         else
                         {
                             // 6. Si el largo no cabe, probar corto
                             if (tracker.longitud_corto > 0.01)
                             {
-                                centerPt = new Point3d(x + (tracker.longitud_corto / 2.0), y + (tracker.ancho_huella_ns / 2.0), 0);
-                                if (IsPointValid(netAreaPoly, affectionPolys, centerPt))
+                                centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
+                                if (IsTrackerValid_4Corners(netAreaPoly, affectionPolys, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                                 {
                                     currentLayout.ShortTrackers++;
-                                    currentLayout.TrackersToDraw.Add(CreateTrackerPolyline(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
-                                    x += tracker.longitud_corto + currentOffsetEO;
+                                    currentLayout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
+                                    y += tracker.longitud_corto + currentOffsetNS; // Avanzar N-S
                                 }
-                                else { x += 1.0; } // Avanzar 1m
+                                else { y += 1.0; } // Avanzar 1m
                             }
-                            else { x += 1.0; } // Avanzar 1m
+                            else { y += 1.0; } // Avanzar 1m
                         }
                     }
                 }
@@ -330,66 +331,87 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- 'IsPointValid' (Sin cambios) ---
+        // --- FUNCIÓN 'IsPointValid' (Sin cambios) ---
         private static bool IsPointValid(Polyline netArea, List<Polyline> affections, Point3d testPoint)
         {
-            // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInsidePoly(netArea, testPoint))
-            {
-                return false;
-            }
-            
-            // Condición 2: NO debe estar dentro de NINGUNA afección
+            if (!IsPointInsidePoly(netArea, testPoint)) { return false; }
             foreach (Polyline affPoly in affections)
             {
-                if (IsPointInsidePoly(affPoly, testPoint))
-                {
-                    return false; // Está bloqueado por una afección
-                }
+                if (IsPointInsidePoly(affPoly, testPoint)) { return false; }
             }
-            
-            return true; // Pasó ambas pruebas
+            return true;
         }
         
-        // --- 'IsPointInsidePoly' (Sin cambios) ---
+        // --- FUNCIÓN 'IsPointInsidePoly' (v37 - CORREGIDA) ---
         private static bool IsPointInsidePoly(Polyline poly, Point3d testPoint)
         {
             int crossings = 0;
             for (int i = 0; i < poly.NumberOfVertices; i++)
             {
-                // Obtener Puntos 2D
                 Point2d p1 = poly.GetPoint2dAt(i);
-                Point2d p2 = poly.GetPoint2dAt((i + 1) % poly.NumberOfVertices); // Siguiente o el primero
-                Point2d test = testPoint.Convert2d(new Plane());
+                Point2d p2 = poly.GetPoint2dAt((i + 1) % poly.NumberOfVertices); 
+                
+                double testX = testPoint.X;
+                double testY = testPoint.Y;
 
-
-                if (((p1.Y <= test.Y && p2.Y > test.Y) || (p1.Y > test.Y && p2.Y <= test.Y)) &&
-                    (test.X < (p2.X - p1.X) * (test.Y - p1.Y) / (p2.Y - p1.Y) + p1.X))
+                if (((p1.Y <= testY && p2.Y > testY) || (p1.Y > testY && p2.Y <= testY)))
                 {
-                    crossings++;
+                    // Evitar división por cero en líneas verticales
+                    if (p2.Y - p1.Y == 0) continue; 
+                    
+                    double x_intercept = (p2.X - p1.X) * (testY - p1.Y) / (p2.Y - p1.Y) + p1.X;
+                    if (testX < x_intercept)
+                    {
+                        crossings++;
+                    }
                 }
             }
             return (crossings % 2 == 1); // Impar = Dentro
         }
 
-
-        // --- CreateTrackerPolyline (sin cambios) ---
-        private static Polyline CreateTrackerPolyline(Point3d center, double length, double width, string layer)
+        // --- NUEVA FUNCIÓN 'IsTrackerValid_4Corners' (v37) ---
+        private static bool IsTrackerValid_4Corners(Polyline netArea, List<Polyline> affections, Point3d center, double length, double width)
         {
-            double halfLen = length / 2.0;
-            double halfWid = width / 2.0;
+            double halfLen = length / 2.0; // Largo (Y)
+            double halfWid = width / 2.0;  // Ancho (X)
+
+            // Calcular las 4 esquinas
+            Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
+            Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
+            Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
+            Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
+
+            // Comprobar que TODAS las esquinas son válidas
+            if (!IsPointValid(netArea, affections, p1)) return false;
+            if (!IsPointValid(netArea, affections, p2)) return false;
+            if (!IsPointValid(netArea, affections, p3)) return false;
+            if (!IsPointValid(netArea, affections, p4)) return false;
+
+            return true; // Todas las esquinas están bien
+        }
+
+
+        // --- NUEVA FUNCIÓN 'CreateTrackerPolyline_NS' (v37) ---
+        private static Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
+        {
+            double halfLen = length / 2.0; // Y-axis
+            double halfWid = width / 2.0;  // X-axis
+            
             Polyline rect = new Polyline();
             rect.SetDatabaseDefaults();
             rect.Layer = layer;
-            rect.AddVertexAt(0, new Point2d(center.X - halfLen, center.Y - halfWid), 0, 0, 0);
-            rect.AddVertexAt(1, new Point2d(center.X + halfLen, center.Y - halfWid), 0, 0, 0);
-            rect.AddVertexAt(2, new Point2d(center.X + halfLen, center.Y + halfWid), 0, 0, 0);
-            rect.AddVertexAt(3, new Point2d(center.X - halfLen, center.Y + halfWid), 0, 0, 0);
+            
+            // Dibuja el rectángulo con el ancho en X y el largo en Y
+            rect.AddVertexAt(0, new Point2d(center.X - halfWid, center.Y - halfLen), 0, 0, 0); // Abajo-Izquierda
+            rect.AddVertexAt(1, new Point2d(center.X + halfWid, center.Y - halfLen), 0, 0, 0); // Abajo-Derecha
+            rect.AddVertexAt(2, new Point2d(center.X + halfWid, center.Y + halfLen), 0, 0, 0); // Arriba-Derecha
+            rect.AddVertexAt(3, new Point2d(center.X - halfWid, center.Y + halfLen), 0, 0, 0); // Arriba-Izquierda
             rect.Closed = true;
+
             return rect;
         }
         
-        // --- DrawFinalLayout (v36 - CORREGIDA) ---
+        // --- DrawFinalLayout (v37 - Modificada para llamar a la función correcta) ---
         private static void DrawFinalLayout(Database db, LayoutResult winningLayout)
         {
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -397,13 +419,10 @@ namespace Civil3D_Phase1
                 BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
                 
-                // --- CORRECCIÓN v36: Capas ELIMINADAS de aquí ---
-                // (Ya se crearon en el Paso 5)
-
-                // Dibujar cada tracker del layout ganador
+                // Las capas ya se crearon en el Paso 5
+                
                 foreach (Polyline trackerPoly in winningLayout.TrackersToDraw)
                 {
-                    // Añadimos la polilínea (que ya tiene capa) al ModelSpace
                     btr.AppendEntity(trackerPoly);
                     tr.AddNewlyCreatedDBObject(trackerPoly, true);
                 }
