@@ -8,7 +8,7 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// using Autodesk.AutoCAD.BoundaryRepresentation; // <-- ELIMINADO
+// NO SE NECESITAN LIBRERÍAS EXTRA
 
 namespace Civil3D_Phase1
 {
@@ -47,7 +47,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v34 - Corrección final API Región) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v35 - Optimización por Ray-Casting) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -108,40 +108,27 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- Todos los inputs han sido seleccionados. ---");
 
 
-            // --- PASO 4: Cálculo de Área Neta y Mapa de Validez (Sin cambios) ---
+            // --- PASO 4: Cálculo de Área Neta (Simplificado) ---
             ed.WriteMessage("\nIniciando Paso 4: Cálculo del Área Neta...");
             
             // 4a. Calcular Retranqueo (Setback)
             ObjectId netAreaId = GetNetArea(db, parcelId, setback);
             if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo). Cancelando."); return; }
             ed.WriteMessage("\n¡Área Neta (retranqueo) calculada y dibujada en 'AREA_NETA'!");
-
-            // 4b. Restar Afecciones (Llamando a la v30)
-            ObjectIdCollection finalValidAreaIds; // <-- CONTENDRÁ IDs DE REGIONES
-            if (affectionIds.Count > 0)
-            {
-                ed.WriteMessage("\nRestando afecciones del Área Neta...");
-                finalValidAreaIds = SubtractAffections_v30(db, netAreaId, affectionIds);
-                if (finalValidAreaIds.Count == 0) { ed.WriteMessage("\nERROR: La resta de afecciones falló."); return; }
-                ed.WriteMessage($"\n¡Afecciones restadas con éxito! Resultado dibujado en 'AREA_VALIDA_FINAL'.");
-            }
-            else
-            {
-                // Si no hay afecciones, convertir la polilínea 'netAreaId' a Región
-                finalValidAreaIds = ConvertCurveToRegion(db, netAreaId, "AREA_VALIDA_FINAL", Color.FromRgb(0, 255, 0));
-                if (finalValidAreaIds.Count == 0) { ed.WriteMessage("\nERROR: No se pudo convertir el área neta a región."); return; }
-            }
             
-            ed.WriteMessage("\n¡Mapa de Validez (REGIONES) calculado con éxito!");
+            // --- LÓGICA DE RESTA BOOLEANA ELIMINADA ---
+            ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Bucle de Optimización (Sin cambios) ---
+            // --- PASO 5: Bucle de Optimización (v35) ---
             ed.WriteMessage("\n--- Iniciando Paso 5: Bucle de Optimización (100 iteraciones) ---");
-            LayoutResult winningLayout = RunOptimizationLoop_v30(db, finalValidAreaIds, selectedTracker, pitchEjeAEje);
+            
+            // --- LLAMADA A LA NUEVA FUNCIÓN ---
+            LayoutResult winningLayout = RunOptimizationLoop_v35(db, netAreaId, affectionIds, selectedTracker, pitchEjeAEje);
             
             if (winningLayout == null)
             {
-                ed.WriteMessage("\nERROR: No se encontró ningún layout válido (Región Cero?).");
+                ed.WriteMessage("\nERROR: No se encontró ningún layout válido (Área Cero?).");
                 return;
             }
             
@@ -253,134 +240,38 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'SubtractAffections_v30' (Sin cambios) ---
-        private static ObjectIdCollection SubtractAffections_v30(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds)
-        {
-            ObjectIdCollection finalAreaIds = new ObjectIdCollection();
-            string layerName = "AREA_VALIDA_FINAL";
-            Color color = Color.FromRgb(0, 255, 0); // Verde
-            List<Region> regionsToDispose = new List<Region>();
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    CreateLayer(db, tr, layerName, color);
-                    Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
-                    if (netAreaCurve == null) return finalAreaIds;
-                    
-                    DBObjectCollection netAreaRegions = Region.CreateFromCurves(new DBObjectCollection { netAreaCurve });
-                    if (netAreaRegions.Count == 0) return finalAreaIds;
-                    Region baseRegion = netAreaRegions[0] as Region;
-                    regionsToDispose.Add(baseRegion);
-
-                    foreach (ObjectId affId in affectionIds)
-                    {
-                        Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
-                        if (affCurve == null) continue;
-                        DBObjectCollection affRegions = Region.CreateFromCurves(new DBObjectCollection { affCurve });
-                        if (affRegions.Count > 0)
-                        {
-                            Region affRegion = affRegions[0] as Region;
-                            regionsToDispose.Add(affRegion); 
-                            baseRegion.BooleanOperation(BooleanOperationType.BoolSubtract, affRegion);
-                        }
-                    }
-
-                    if (!baseRegion.IsDisposed && baseRegion.Area > 0.001)
-                    {
-                        BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                        BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                        
-                        baseRegion.Layer = layerName;
-                        btr.AppendEntity(baseRegion);
-                        tr.AddNewlyCreatedDBObject(baseRegion, true);
-                        
-                        finalAreaIds.Add(baseRegion.ObjectId);
-                    }
-
-                    tr.Commit();
-                }
-                catch (System.Exception ex)
-                {
-                    Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nERROR durante la resta booleana v30: {ex.Message}");
-                    tr.Abort();
-                }
-                finally
-                {
-                    foreach (Region r in regionsToDispose) 
-                    { 
-                        if (r != null && !r.IsDisposed && !r.IsReadEnabled && !r.IsReadEnabled) 
-                            r.Dispose(); 
-                    }
-                }
-                
-                return finalAreaIds;
-            }
-        }
-        
-        // --- ConvertCurveToRegion (Sin cambios) ---
-        private static ObjectIdCollection ConvertCurveToRegion(Database db, ObjectId curveId, string layerName, Color color)
-        {
-             using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    CreateLayer(db, tr, layerName, color);
-                    Curve curve = tr.GetObject(curveId, OpenMode.ForRead) as Curve;
-                    if (curve == null) return new ObjectIdCollection();
-
-                    DBObjectCollection regions = Region.CreateFromCurves(new DBObjectCollection { curve });
-                    if (regions.Count == 0) return new ObjectIdCollection();
-                    
-                    Region region = regions[0] as Region;
-                    
-                    BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                    BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-                    region.Layer = layerName;
-                    btr.AppendEntity(region);
-                    tr.AddNewlyCreatedDBObject(region, true);
-
-                    tr.Commit();
-                    return new ObjectIdCollection { region.ObjectId };
-                }
-                catch { tr.Abort(); return new ObjectIdCollection(); }
-            }
-        }
+        // --- FUNCIONES DE REGIÓN ELIMINADAS ---
+        // (SubtractAffections_v30)
+        // (ConvertCurveToRegion)
 
 
-        // --- RunOptimizationLoop_v30 (Sin cambios) ---
-        private static LayoutResult RunOptimizationLoop_v30(Database db, ObjectIdCollection validRegionIds, TrackerModel tracker, double pitchNS)
+        // --- FUNCIÓN 'RunOptimizationLoop' (v35 - REESCRITA) ---
+        private static LayoutResult RunOptimizationLoop_v35(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchNS)
         {
             LayoutResult bestLayout = new LayoutResult { TotalTrackers = 0 };
 
-            List<Region> validRegions = new List<Region>();
+            // 1. Abrir las Polilíneas de área neta y afecciones
+            Polyline netAreaPoly = null;
+            List<Polyline> affectionPolys = new List<Polyline>();
             Extents3d totalExtents = new Extents3d();
-            bool extentsInitialized = false;
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                foreach (ObjectId id in validRegionIds)
+                // Abrir la polilínea magenta
+                netAreaPoly = tr.GetObject(netAreaId, OpenMode.ForRead) as Polyline;
+                if (netAreaPoly == null) return null; // Error grave
+                totalExtents = netAreaPoly.GeometricExtents;
+                
+                // Abrir todas las polilíneas de afecciones
+                foreach (ObjectId id in affectionIds)
                 {
-                    Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
-                    if (region != null)
-                    { 
-                        validRegions.Add(region);
-                        if (!extentsInitialized)
-                        {
-                            totalExtents = region.GeometricExtents;
-                            extentsInitialized = true;
-                        }
-                        else
-                        {
-                            totalExtents.AddExtents(region.GeometricExtents);
-                        }
-                    }
+                    Polyline poly = tr.GetObject(id, OpenMode.ForRead) as Polyline;
+                    if (poly != null) affectionPolys.Add(poly);
                 }
+                tr.Abort(); // Solo leemos
             } 
 
-            if (validRegions.Count == 0) return null; 
-
+            // 2. El Bucle de 100 Iteraciones
             for (int i = 0; i < 100; i++)
             {
                 double currentOffsetEO = 0.1 + (i * 0.1); 
@@ -390,14 +281,17 @@ namespace Civil3D_Phase1
                     TrackersToDraw = new List<Polyline>() 
                 };
 
+                // 3. Iterar la Grilla
                 for (double y = totalExtents.MinPoint.Y; y < totalExtents.MaxPoint.Y; y += pitchNS)
                 {
                     double x = totalExtents.MinPoint.X;
                     while (x < totalExtents.MaxPoint.X)
                     {
+                        // 4. Probar Tracker Largo
                         Point3d centerPt = new Point3d(x + (tracker.longitud_largo / 2.0), y + (tracker.ancho_huella_ns / 2.0), 0);
                         
-                        if (IsPointInsideRegions(db, validRegionIds, centerPt))
+                        // 5. Test de Colisión (v35)
+                        if (IsPointValid(netAreaPoly, affectionPolys, centerPt))
                         {
                             currentLayout.LongTrackers++;
                             currentLayout.TrackersToDraw.Add(CreateTrackerPolyline(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -405,22 +299,24 @@ namespace Civil3D_Phase1
                         }
                         else
                         {
+                            // 6. Si el largo no cabe, probar corto
                             if (tracker.longitud_corto > 0.01)
                             {
                                 centerPt = new Point3d(x + (tracker.longitud_corto / 2.0), y + (tracker.ancho_huella_ns / 2.0), 0);
-                                if (IsPointInsideRegions(db, validRegionIds, centerPt))
+                                if (IsPointValid(netAreaPoly, affectionPolys, centerPt))
                                 {
                                     currentLayout.ShortTrackers++;
                                     currentLayout.TrackersToDraw.Add(CreateTrackerPolyline(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
                                     x += tracker.longitud_corto + currentOffsetEO;
                                 }
-                                else { x += 1.0; }
+                                else { x += 1.0; } // Avanzar 1m
                             }
-                            else { x += 1.0; }
+                            else { x += 1.0; } // Avanzar 1m
                         }
                     }
                 }
 
+                // 7. Guardar el mejor resultado
                 currentLayout.TotalTrackers = currentLayout.LongTrackers + currentLayout.ShortTrackers;
                 if (currentLayout.TotalTrackers > bestLayout.TotalTrackers)
                 {
@@ -431,49 +327,51 @@ namespace Civil3D_Phase1
             return bestLayout;
         }
 
-        // --- FUNCIÓN 'IsPointInsideRegions' (v34 - CORREGIDA) ---
+        // --- FUNCIÓN 'IsPointInsideRegions' REEMPLAZADA POR 'IsPointValid' (v35) ---
         /// <summary>
-        /// Comprueba si un punto está dentro de CUALQUIERA de las REGIONES.
+        /// Comprueba si un punto es válido (Dentro de Área Neta Y Fuera de Afecciones)
         /// </summary>
-        private static bool IsPointInsideRegions(Database db, ObjectIdCollection regionIds, Point3d testPoint)
+        private static bool IsPointValid(Polyline netArea, List<Polyline> affections, Point3d testPoint)
         {
-            // Vector de "rayo" (apuntando hacia arriba)
-            Vector3d rayVector = Vector3d.ZAxis;
-            
-            // Tolerancia
-            Tolerance tol = new Tolerance(1e-6, 1e-6);
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            // Condición 1: Debe estar DENTRO del área neta
+            if (!IsPointInsidePoly(netArea, testPoint))
             {
-                foreach (ObjectId id in regionIds)
-                {
-                    Region region = tr.GetObject(id, OpenMode.ForRead) as Region;
-                    if (region != null)
-                    {
-                        // --- CORRECCIÓN v34: Usar Hittest (Ray Casting) ---
-                        // Este es el método nativo de AutoCAD para "disparar un rayo"
-                        // y ver cuántas veces golpea el objeto.
-                        
-                        // Hacemos un ray-cast desde nuestro punto hacia arriba (Z+)
-                        region.SubentityHittest(testPoint, rayVector, 0, 0, tol, tol);
-                        
-                        // Obtenemos los resultados del hit
-                        SubentityId[] hitSubIds = region.GetHitSubentityIds();
-
-                        if (hitSubIds != null && hitSubIds.Length > 0)
-                        {
-                            // Si el número de "hits" es IMPAR, el punto está dentro.
-                            if (hitSubIds.Length % 2 == 1)
-                            {
-                                tr.Abort();
-                                return true;
-                            }
-                        }
-                    }
-                }
-                tr.Abort(); // No encontrado
                 return false;
             }
+            
+            // Condición 2: NO debe estar dentro de NINGUNA afección
+            foreach (Polyline affPoly in affections)
+            {
+                if (IsPointInsidePoly(affPoly, testPoint))
+                {
+                    return false; // Está bloqueado por una afección
+                }
+            }
+            
+            return true; // Pasó ambas pruebas
+        }
+        
+        /// <summary>
+        /// Algoritmo Ray-Casting para comprobar si un punto 2D está en una Polilínea 2D.
+        /// </summary>
+        private static bool IsPointInsidePoly(Polyline poly, Point3d testPoint)
+        {
+            int crossings = 0;
+            for (int i = 0; i < poly.NumberOfVertices; i++)
+            {
+                // Obtener Puntos 2D
+                Point2d p1 = poly.GetPoint2dAt(i);
+                Point2d p2 = poly.GetPoint2dAt((i + 1) % poly.NumberOfVertices); // Siguiente o el primero
+                Point2d test = testPoint.Convert2d(new Plane());
+
+
+                if (((p1.Y <= test.Y && p2.Y > test.Y) || (p1.Y > test.Y && p2.Y <= test.Y)) &&
+                    (test.X < (p2.X - p1.X) * (test.Y - p1.Y) / (p2.Y - p1.Y) + p1.X))
+                {
+                    crossings++;
+                }
+            }
+            return (crossings % 2 == 1); // Impar = Dentro
         }
 
 
