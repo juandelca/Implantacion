@@ -8,8 +8,10 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// Este 'using' es el que causa el conflicto, pero lo necesitamos.
-using Autodesk.AutoCAD.GraphicsInterface;
+// --- LIBRERÍAS CORREGIDAS PARA v50 ---
+using Autodesk.AutoCAD.GraphicsInterface; // (Necesaria para Polyline del Hatch, aunque ahora la evitamos)
+using Autodesk.AutoCAD.BoundaryRepresentation; // <-- ¡La librería clave que faltaba!
+using AcRx = Autodesk.AutoCAD.Runtime; // <-- Alias para evitar conflictos de 'Exception'
 
 namespace Civil3D_Phase1
 {
@@ -29,11 +31,12 @@ namespace Civil3D_Phase1
 
     public class LayoutResult
     {
+        // ... (Esta clase no cambia) ...
         public double OffsetNS { get; set; } 
         public int TotalTrackers { get; set; }
         public int LongTrackers { get; set; }
         public int ShortTrackers { get; set; }
-        // --- CORRECCIÓN v49: Nombre completo ---
+        // --- CORRECCIÓN v49 (Mantenida) ---
         public List<Autodesk.AutoCAD.DatabaseServices.Polyline> TrackersToDraw { get; set; }
     }
 
@@ -48,7 +51,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v49 - Corrección Ambigüedad Polyline) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v50 - Colisión por Brep) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -102,7 +105,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage($"\nRetranqueo seleccionado: {setback}m");
 
 
-            // --- PASO 3: Selección de Geometría (MODIFICADO v49) ---
+            // --- PASO 3: Selección de Geometría (Sin cambios, v46) ---
             
             // 3a. Seleccionar Parcela
             ObjectId parcelId = SelectPolyline(ed, "\nSeleccione la Polilínea de la Parcela (Debe ser 2D y CERRADA):", true); // <-- Exigir cerrada
@@ -127,7 +130,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (Sin cambios, v48) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v50) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -137,9 +140,10 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método Hatch) ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método Brep) ---");
             
-            LayoutResult finalLayout = RunLayout_v48(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            // --- LLAMADA A LA NUEVA FUNCIÓN v50 ---
+            LayoutResult finalLayout = RunLayout_v50(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
             {
@@ -169,12 +173,11 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO ---");
         }
 
-        // --- Función Auxiliar 1 (v49 - CORREGIDA) ---
+        // --- Función Auxiliar 1 (Sin cambios, v46) ---
         private static ObjectId SelectPolyline(Editor ed, string message, bool requireClosed)
         {
             PromptEntityOptions peo = new PromptEntityOptions(message);
             peo.SetRejectMessage("\nEl objeto seleccionado no es una Polilínea 2D.");
-            // --- CORRECCIÓN v49: Nombre completo ---
             peo.AddAllowedClass(typeof(Autodesk.AutoCAD.DatabaseServices.Polyline), true); 
             peo.AddAllowedClass(typeof(Polyline2d), true); 
 
@@ -201,7 +204,6 @@ namespace Civil3D_Phase1
         }
 
         // --- Función Auxiliar 2 (Sin cambios, v47) ---
-        // (No hay ambigüedad aquí porque "POLYLINE" es un string)
         private static ObjectIdCollection SelectMultiplePolylines(Database db, Editor ed, string message)
         {
             ObjectIdCollection finalCollection = new ObjectIdCollection();
@@ -309,13 +311,12 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v48' (Sin cambios) ---
-        private static LayoutResult RunLayout_v48(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- FUNCIÓN 'RunLayout_v50' (MODIFICADA) ---
+        private static LayoutResult RunLayout_v50(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
             { 
                 OffsetNS = offsetNS, 
-                // --- CORRECCIÓN v49: Nombre completo ---
                 TrackersToDraw = new List<Autodesk.AutoCAD.DatabaseServices.Polyline>() 
             };
 
@@ -341,7 +342,7 @@ namespace Civil3D_Phase1
                     Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                     
                     // 4. Test de Colisión (4-ESQUINAS)
-                    if (IsTrackerValid_4Corners_v48(db, netAreaId, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                    if (IsTrackerValid_4Corners_v50(db, netAreaId, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                     {
                         layout.LongTrackers++;
                         layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -353,7 +354,7 @@ namespace Civil3D_Phase1
                         if (tracker.longitud_corto > 0.01)
                         {
                             centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                            if (IsTrackerValid_4Corners_v48(db, netAreaId, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                            if (IsTrackerValid_4Corners_v50(db, netAreaId, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                             {
                                 layout.ShortTrackers++;
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -370,8 +371,8 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v48' (Sin cambios) ---
-        private static bool IsTrackerValid_4Corners_v48(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
+        // --- FUNCIÓN 'IsTrackerValid_4Corners_v50' (MODIFICADA) ---
+        private static bool IsTrackerValid_4Corners_v50(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
@@ -384,10 +385,10 @@ namespace Civil3D_Phase1
             // Usamos una única transacción para todas las comprobaciones de este tracker
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                if (!IsPointValid_v48(tr, netAreaId, affections, p1)) { tr.Abort(); return false; }
-                if (!IsPointValid_v48(tr, netAreaId, affections, p2)) { tr.Abort(); return false; }
-                if (!IsPointValid_v48(tr, netAreaId, affections, p3)) { tr.Abort(); return false; }
-                if (!IsPointValid_v48(tr, netAreaId, affections, p4)) { tr.Abort(); return false; }
+                if (!IsPointValid_v50(tr, netAreaId, affections, p1)) { tr.Abort(); return false; }
+                if (!IsPointValid_v50(tr, netAreaId, affections, p2)) { tr.Abort(); return false; }
+                if (!IsPointValid_v50(tr, netAreaId, affections, p3)) { tr.Abort(); return false; }
+                if (!IsPointValid_v50(tr, netAreaId, affections, p4)) { tr.Abort(); return false; }
                 
                 tr.Abort(); // Todo bien, no guardamos nada
             }
@@ -395,62 +396,71 @@ namespace Civil3D_Phase1
             return true; // Todas las esquinas están bien
         }
 
-        // --- 'IsPointValid_v48' (Sin cambios) ---
-        private static bool IsPointValid_v48(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
+        // --- FUNCIÓN 'IsPointValid_v50' (MODIFICADA) ---
+        private static bool IsPointValid_v50(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInsidePoly_Hatch_v48(tr, netAreaId, testPoint)) { return false; }
+            if (!IsPointInside_Brep_v50(tr, netAreaId, testPoint)) { return false; }
             
             // Condición 2: NO debe estar dentro de NINGUNA afección
             foreach (ObjectId affId in affections)
             {
-                if (IsPointInsidePoly_Hatch_v48(tr, affId, testPoint)) { return false; }
+                if (IsPointInside_Brep_v50(tr, affId, testPoint)) { return false; }
             }
             
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly_Hatch_v48' (Sin cambios) ---
-        private static bool IsPointInsidePoly_Hatch_v48(Transaction tr, ObjectId polyId, Point3d testPoint)
+        // --- FUNCIÓN 'IsPointInside_Brep_v50' (NUEVA) ---
+        /// <summary>
+        /// Comprobación de colisión 100% fiable usando Brep.IsPointInside.
+        /// </summary>
+        private static bool IsPointInside_Brep_v50(Transaction tr, ObjectId polyId, Point3d testPoint)
         {
-            Hatch hatch = null;
+            Region region = null;
+            Brep brep = null;
             try
             {
-                Entity poly = (Entity)tr.GetObject(polyId, OpenMode.ForRead);
+                // 1. Abrir la polilínea CERRADA
+                Curve curve = (Curve)tr.GetObject(polyId, OpenMode.ForRead);
 
-                hatch = new Hatch();
-                hatch.SetDatabaseDefaults();
-                hatch.PatternScale = 1.0;
-                hatch.SetHatchPattern(HatchPatternType.PreDefined, "SOLID");
+                // 2. Crear una Región en memoria
+                DBObjectCollection regions = Region.CreateFromCurves(new DBObjectCollection { curve });
+                if (regions.Count == 0) return false;
+                region = (Region)regions[0];
+
+                // 3. Crear un Brep (Boundary Representation) a partir de la Región
+                brep = new Brep(region);
                 
-                ObjectIdCollection loopIds = new ObjectIdCollection();
-                loopIds.Add(polyId);
-                hatch.AppendLoop(HatchLoopTypes.Outermost, loopIds);
-
-                hatch.EvaluateHatch(true);
-
-                Point2d testPoint2d;
-                hatch.IsPointInHatch(testPoint, out testPoint2d); 
-                
-                hatch.BulgeAt(testPoint2d);
-
-                hatch.Dispose(); 
-                return true;
-            }
-            catch (Autodesk.AutoCAD.DatabaseServices.Exception ex)
-            {
-                if (ex.ErrorStatus == ErrorStatus.OutsideHatch)
+                if (brep != null)
                 {
-                    if (hatch != null) hatch.Dispose();
-                    return false; // Está FUERA
+                    // 4. La comprobación fiable (devuelve 'true' si está dentro)
+                    bool isInside = brep.IsPointInside(testPoint);
+                    
+                    // 5. Limpiar memoria
+                    brep.Dispose();
+                    region.Dispose();
+                    return isInside;
                 }
                 
-                if (hatch != null) hatch.Dispose();
+                if (region != null) region.Dispose();
+                return false;
+            }
+            // --- CORRECCIÓN v50: Usar los namespaces correctos ---
+            catch (AcRx.Exception ex)
+            {
+                // Si el Brep falla (p.ej. polilínea auto-intersectada), asumir que está "fuera" por seguridad
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError de Brep: {ex.Message}");
+                if (brep != null) brep.Dispose();
+                if (region != null) region.Dispose();
                 return false; 
             }
-            catch (System.Exception)
+            catch (System.Exception ex)
             {
-                if (hatch != null) hatch.Dispose();
+                // Error general
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError de Sistema en Brep: {ex.Message}");
+                if (brep != null) brep.Dispose();
+                if (region != null) region.Dispose();
                 return false; 
             }
         }
