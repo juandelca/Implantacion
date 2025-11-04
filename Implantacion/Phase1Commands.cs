@@ -8,10 +8,8 @@ using Newtonsoft.Json;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Colors;
 using System.Linq;
-// --- LIBRERÍAS CORREGIDAS PARA v52 ---
-using Autodesk.AutoCAD.GraphicsInterface; // (Necesaria para Polyline del Hatch, aunque ahora la evitamos)
-using Autodesk.AutoCAD.BoundaryRepresentation; // <-- ¡La librería clave que faltaba!
-using AcRx = Autodesk.AutoCAD.Runtime; // <-- Alias para evitar conflictos de 'Exception'
+// --- LIBRERÍAS DEFECTUOSAS ELIMINADAS ---
+// (Se eliminó BoundaryRepresentation y GraphicsInterface)
 
 namespace Civil3D_Phase1
 {
@@ -37,6 +35,7 @@ namespace Civil3D_Phase1
         public int LongTrackers { get; set; }
         public int ShortTrackers { get; set; }
         // --- CORRECCIÓN v49 (Mantenida) ---
+        // (La ambigüedad desaparece, pero lo dejamos por si acaso)
         public List<Autodesk.AutoCAD.DatabaseServices.Polyline> TrackersToDraw { get; set; }
     }
 
@@ -51,7 +50,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v52 - Colisión por Brep) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v53 - Colisión por IntersectWith) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -130,7 +129,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n¡Mapa de Validez (Polilíneas) calculado con éxito!");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v52) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v53) ---
             
             ed.WriteMessage("\nCreando capas de salida 'TRACKERS_LARGOS' y 'TRACKERS_CORTOS'...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -140,10 +139,10 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método Brep) ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout Fijo (Método IntersectWith) ---");
             
-            // --- LLAMADA A LA NUEVA FUNCIÓN v52 ---
-            LayoutResult finalLayout = RunLayout_v52(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            // --- LLAMADA A LA NUEVA FUNCIÓN v53 ---
+            LayoutResult finalLayout = RunLayout_v53(db, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
             
             if (finalLayout == null)
             {
@@ -311,8 +310,8 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- FUNCIÓN 'RunLayout_v52' (MODIFICADA) ---
-        private static LayoutResult RunLayout_v52(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- FUNCIÓN 'RunLayout_v53' (MODIFICADA) ---
+        private static LayoutResult RunLayout_v53(Database db, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult 
             { 
@@ -322,14 +321,30 @@ namespace Civil3D_Phase1
 
             // 1. Abrir las geometrías y obtener sus extents
             Extents3d totalExtents = new Extents3d();
+            // --- v53: Guardamos las polilíneas (en listas 2D) para usarlas en las comprobaciones
+            List<Point2d> netAreaVertices = new List<Point2d>();
+            List<List<Point2d>> affectionVerticesList = new List<List<Point2d>>();
+
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
                 if (netAreaCurve == null) return null; // Error
                 totalExtents = netAreaCurve.GeometricExtents;
+                netAreaVertices = Get2DVertices_v45(netAreaCurve); // (Esta función es correcta, la mantenemos)
+                
+                foreach (ObjectId id in affectionIds)
+                {
+                    Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
+                    if (affCurve != null)
+                    {
+                        affectionVerticesList.Add(Get2DVertices_v45(affCurve)); 
+                    }
+                }
                 tr.Abort(); 
             } 
             
+            if (netAreaVertices.Count == 0) return null;
+
             // 2. Iterar la Grilla (N-S)
             // Bucle E-O (X) - Filas
             for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
@@ -341,8 +356,8 @@ namespace Civil3D_Phase1
                     // 3. Probar Tracker Largo
                     Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                     
-                    // 4. Test de Colisión (4-ESQUINAS)
-                    if (IsTrackerValid_4Corners_v52(db, netAreaId, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                    // 4. Test de Colisión (4-ESQUINAS + INTERSECCIÓN)
+                    if (IsTrackerValid_v53(db, netAreaVertices, affectionIds, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                     {
                         layout.LongTrackers++;
                         layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -354,7 +369,7 @@ namespace Civil3D_Phase1
                         if (tracker.longitud_corto > 0.01)
                         {
                             centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                            if (IsTrackerValid_4Corners_v52(db, netAreaId, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                            if (IsTrackerValid_v53(db, netAreaVertices, affectionIds, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                             {
                                 layout.ShortTrackers++;
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -371,102 +386,124 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- FUNCIÓN 'IsTrackerValid_4Corners_v52' (MODIFICADA) ---
-        private static bool IsTrackerValid_4Corners_v52(Database db, ObjectId netAreaId, ObjectIdCollection affections, Point3d center, double length, double width)
+        // --- FUNCIÓN 'IsTrackerValid_v53' (NUEVA) ---
+        private static bool IsTrackerValid_v53(Database db, List<Point2d> netArea, ObjectIdCollection affectionIds, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
 
-            Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
-            Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
-            Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
-            Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
+            // 1. Crear los puntos 2D de las esquinas
+            Point2d p1 = new Point2d(center.X - halfWid, center.Y - halfLen); // Abajo-Izquierda
+            Point2d p2 = new Point2d(center.X + halfWid, center.Y - halfLen); // Abajo-Derecha
+            Point2d p3 = new Point2d(center.X + halfWid, center.Y + halfLen); // Arriba-Derecha
+            Point2d p4 = new Point2d(center.X - halfWid, center.Y + halfLen); // Arriba-Izquierda
 
-            // Usamos una única transacción para todas las comprobaciones de este tracker
+            // 2. Comprobar las 4 esquinas (Ray-Casting) contra el ÁREA NETA
+            // (Usamos listas de vértices 2D que ya abrimos)
+            if (!IsPointInsidePoly_v45(netArea, p1)) return false;
+            if (!IsPointInsidePoly_v45(netArea, p2)) return false;
+            if (!IsPointInsidePoly_v45(netArea, p3)) return false;
+            if (!IsPointInsidePoly_v45(netArea, p4)) return false;
+
+            // 3. Si las 4 esquinas están dentro, hacemos la comprobación de INTERSECCIÓN
+            // (Esta es la comprobación lenta pero fiable)
+            
+            // Crear el tracker como polilínea en memoria (no se añade al dibujo)
+            Autodesk.AutoCAD.DatabaseServices.Polyline trackerPoly = CreateTrackerPolyline_NS(center, length, width, "temp");
+            
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                if (!IsPointValid_v52(tr, netAreaId, affections, p1)) { tr.Abort(); return false; }
-                if (!IsPointValid_v52(tr, netAreaId, affections, p2)) { tr.Abort(); return false; }
-                if (!IsPointValid_v52(tr, netAreaId, affections, p3)) { tr.Abort(); return false; }
-                if (!IsPointValid_v52(tr, netAreaId, affections, p4)) { tr.Abort(); return false; }
-                
-                tr.Abort(); // Todo bien, no guardamos nada
-            }
+                foreach (ObjectId affId in affectionIds)
+                {
+                    Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
+                    if (affCurve == null) continue;
 
-            return true; // Todas las esquinas están bien
+                    // Crear un objeto Point3dCollection para almacenar los puntos de intersección
+                    Point3dCollection intersectionPoints = new Point3dCollection();
+                    
+                    // ¡La función clave! Comprueba si el trackerPoly intersecta con la afección
+                    trackerPoly.IntersectWith(affCurve, Intersect.OnBothOperands, intersectionPoints, System.IntPtr.Zero, System.IntPtr.Zero);
+
+                    // Si se encontró CUALQUIER punto de intersección, el tracker es INVÁLIDO
+                    if (intersectionPoints.Count > 0)
+                    {
+                        tr.Abort();
+                        trackerPoly.Dispose(); // Limpiar el tracker de memoria
+                        return false; 
+                    }
+                }
+                tr.Abort(); // No guardamos nada
+            }
+            
+            trackerPoly.Dispose(); // Limpiar el tracker de memoria
+            return true; // Pasó ambas pruebas (4 esquinas DENTRO de Neta y 0 intersecciones con Afecciones)
         }
 
-        // --- FUNCIÓN 'IsPointValid_v52' (MODIFICADA) ---
-        private static bool IsPointValid_v52(Transaction tr, ObjectId netAreaId, ObjectIdCollection affections, Point3d testPoint)
-        {
-            // Condición 1: Debe estar DENTRO del área neta
-            if (!IsPointInside_Brep_v52(tr, netAreaId, testPoint)) { return false; }
-            
-            // Condición 2: NO debe estar dentro de NINGUNA afección
-            foreach (ObjectId affId in affections)
-            {
-                if (IsPointInside_Brep_v52(tr, affId, testPoint)) { return false; }
-            }
-            
-            return true; // Pasó ambas pruebas
-        }
         
-        // --- FUNCIÓN 'IsPointInside_Brep_v52' (NUEVA) ---
-        /// <summary>
-        /// Comprobación de colisión 100% fiable usando Brep.IsPointInside.
-        /// </summary>
-        private static bool IsPointInside_Brep_v52(Transaction tr, ObjectId polyId, Point3d testPoint)
+        // --- 'IsPointInsidePoly_v45' (Mantenida, es correcta) ---
+        private static bool IsPointInsidePoly_v45(List<Point2d> vertices, Point2d testPoint)
         {
-            Region region = null;
-            Brep brep = null;
             try
             {
-                // 1. Abrir la polilínea CERRADA
-                Curve curve = (Curve)tr.GetObject(polyId, OpenMode.ForRead);
+                int crossings = 0;
+                double testX = testPoint.X;
+                double testY = testPoint.Y;
 
-                // 2. Crear una Región en memoria
-                DBObjectCollection regions = Region.CreateFromCurves(new DBObjectCollection { curve });
-                if (regions.Count == 0) return false;
-                region = (Region)regions[0];
-
-                // 3. Crear un Brep (Boundary Representation) a partir de la Región
-                brep = new Brep(region);
-                
-                if (brep != null)
+                for (int i = 0; i < vertices.Count; i++)
                 {
-                    // 4. La comprobación fiable (devuelve 'true' si está dentro)
-                    bool isInside = brep.IsPointInside(testPoint);
-                    
-                    // 5. Limpiar memoria
-                    brep.Dispose();
-                    region.Dispose();
-                    return isInside;
+                    Point2d p1 = vertices[i];
+                    Point2d p2 = vertices[(i + 1) % vertices.Count]; // Siguiente o el primero
+
+                    double p1_X = p1.X;
+                    double p1_Y = p1.Y;
+                    double p2_X = p2.X;
+                    double p2_Y = p2.Y;
+
+                    if (((p1_Y <= testY && p2_Y > testY) || (p1_Y > testY && p2_Y <= testY)))
+                    {
+                        if (p2_Y - p1_Y == 0) continue; 
+                        
+                        double x_intercept = (p2_X - p1_X) * (testY - p1_Y) / (p2_Y - p1_Y) + p1_X;
+                        if (testX < x_intercept)
+                        {
+                            crossings++;
+                        }
+                    }
                 }
-                
-                if (region != null) region.Dispose();
-                return false;
-            }
-            // --- CORRECCIÓN v52: Usar los namespaces correctos ---
-            catch (AcRx.Exception ex)
-            {
-                // Si el Brep falla (p.ej. polilínea auto-intersectada), asumir que está "fuera" por seguridad
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError de Brep: {ex.Message}");
-                if (brep != null) brep.Dispose();
-                if (region != null) region.Dispose();
-                return false; 
+                return (crossings % 2 == 1); // Impar = Dentro
             }
             catch (System.Exception ex)
             {
-                // Error general
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError de Sistema en Brep: {ex.Message}");
-                if (brep != null) brep.Dispose();
-                if (region != null) region.Dispose();
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nError en IsPointInsidePoly_v45: {ex.Message}");
                 return false; 
             }
         }
         
-        // --- 'Get2DVertices_v45' (ELIMINADO - ya no se usa) ---
-        // --- 'IsPointInsidePoly_v45' (ELIMINADO - ya no se usa) ---
+        // --- 'Get2DVertices_v45' (Mantenida, es correcta) ---
+        private static List<Point2d> Get2DVertices_v45(Curve curve)
+        {
+            List<Point2d> vertices = new List<Point2d>();
+
+            if (curve is Autodesk.AutoCAD.DatabaseServices.Polyline poly) // Es una LWPOLYLINE
+            {
+                for (int i = 0; i < poly.NumberOfVertices; i++)
+                {
+                    // Obtener el vértice 3D (WCS) y extraer X, Y
+                    Point3d pt3d = poly.GetPoint3dAt(i);
+                    vertices.Add(new Point2d(pt3d.X, pt3d.Y));
+                }
+            }
+            else if (curve is Polyline2d poly2d) // Es una Polyline 2D
+            {
+                foreach (ObjectId vertexId in poly2d)
+                {
+                    Vertex2d vertex = (Vertex2d)vertexId.GetObject(OpenMode.ForRead);
+                    // vertex.Position ya es un Point3d (WCS)
+                    vertices.Add(new Point2d(vertex.Position.X, vertex.Position.Y));
+                }
+            }
+            return vertices;
+        }
 
         // --- 'CreateTrackerPolyline_NS' (v49 - CORREGIDA) ---
         private static Autodesk.AutoCAD.DatabaseServices.Polyline CreateTrackerPolyline_NS(Point3d center, double length, double width, string layer)
