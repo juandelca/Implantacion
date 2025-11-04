@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v59 - Algoritmo Ray-Cast Corregido) ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v60 - CORREGIDO TYPO CRÍTICO) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -116,7 +116,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
 
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v59) ---
+            // --- PASO 5: Generación de Layout (MODIFICADO v60) ---
             ed.WriteMessage("\nCreando capas de salida...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -125,13 +125,13 @@ namespace Civil3D_Phase1
                 tr.Commit();
             }
 
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Ray-Cast v59) ---");
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Ray-Cast v60) ---");
 
-            LayoutResult finalLayout = RunLayout_v59(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            LayoutResult finalLayout = RunLayout_v60(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
 
             if (finalLayout == null)
             {
-                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v59).");
+                ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v60).");
                 return;
             }
 
@@ -154,7 +154,7 @@ namespace Civil3D_Phase1
             DrawFinalLayout(db, finalLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito!");
 
-            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v59) ---");
+            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v60) ---");
         }
 
         // --- Función Auxiliar 1 (SelectPolyline, v56) ---
@@ -297,9 +297,9 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v59' (MODIFICADO v59) ---
-        // Llama a las funciones de teselado v53 y colisión v59
-        private static LayoutResult RunLayout_v59(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v60' (MODIFICADO v60) ---
+        // Llama a las funciones de teselado v53 y colisión v60
+        private static LayoutResult RunLayout_v60(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult
             {
@@ -342,8 +342,8 @@ namespace Civil3D_Phase1
                         {
                             Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
                             
-                            // Test de Colisión (Largo) - LLAMA A LA NUEVA LÓGICA v59
-                            if (IsTrackerValid_4Corners_v59(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                            // Test de Colisión (Largo) - LLAMA A LA NUEVA LÓGICA v60
+                            if (IsTrackerValid_4Corners_v60(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
                             {
                                 layout.LongTrackers++;
                                 layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
@@ -351,11 +351,11 @@ namespace Civil3D_Phase1
                             }
                             else
                             {
-                                // Test de Colisión (Corto) - LLAMA A LA NUEVA LÓGICA v59
+                                // Test de Colisión (Corto) - LLAMA A LA NUEVA LÓGICA v60
                                 if (tracker.longitud_corto > 0.01)
                                 {
                                     centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                                    if (IsTrackerValid_4Corners_v59(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                                    if (IsTrackerValid_4Corners_v60(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
                                     {
                                         layout.ShortTrackers++;
                                         layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
@@ -370,7 +370,7 @@ namespace Civil3D_Phase1
                 }
                 catch (System.Exception ex)
                 {
-                     ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v59): {ex.Message}");
+                     ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v60): {ex.Message}");
                      layout = null; // Fallar
                 }
                 finally
@@ -386,9 +386,9 @@ namespace Civil3D_Phase1
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v59' (NUEVA FUNCIÓN v59) ---
-        // Llama al algoritmo de colisión robusto v59
-        private static bool IsTrackerValid_4Corners_v59(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
+        // --- 'IsTrackerValid_4Corners_v60' (NUEVA FUNCIÓN v60) ---
+        // Llama al algoritmo de colisión robusto v60
+        private static bool IsTrackerValid_4Corners_v60(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
@@ -400,36 +400,35 @@ namespace Civil3D_Phase1
             Point2d p4 = new Point2d(center.X - halfWid, center.Y + halfLen); // Arriba-Izquierda
 
             // Lógica de validación
-            if (!IsPointValid_v59(netArea, affections, p1)) return false;
-            if (!IsPointValid_v59(netArea, affections, p2)) return false;
-            if (!IsPointValid_v59(netArea, affections, p3)) return false;
-            if (!IsPointValid_v59(netArea, affections, p4)) return false;
+            if (!IsPointValid_v60(netArea, affections, p1)) return false;
+            if (!IsPointValid_v60(netArea, affections, p2)) return false;
+            if (!IsPointValid_v60(netArea, affections, p3)) return false;
+            if (!IsPointValid_v60(netArea, affections, p4)) return false;
 
             return true; // Todas las esquinas están DENTRO
         }
         
-        // --- 'IsPointValid_v59' (NUEVA FUNCIÓN v59) ---
-        // Llama al algoritmo de colisión robusto v59
-        private static bool IsPointValid_v59(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
+        // --- 'IsPointValid_v60' (NUEVA FUNCIÓN v60) ---
+        // Llama al algoritmo de colisión robusto v60
+        private static bool IsPointValid_v60(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
         {
             // Condición 1: Debe estar DENTRO del área neta
-            if (netArea.Count == 0 || !IsPointInsidePoly_v59(netArea, testPoint)) { return false; }
+            if (netArea.Count == 0 || !IsPointInsidePoly_v60(netArea, testPoint)) { return false; }
 
             // Condición 2: NO debe estar dentro de NINGUNA afección
             foreach (List<Point2d> affPoly in affections)
             {
-                if (affPoly.Count > 0 && IsPointInsidePoly_v59(affPoly, testPoint)) { return false; }
+                if (affPoly.Count > 0 && IsPointInsidePoly_v60(affPoly, testPoint)) { return false; }
             }
 
             return true; // Pasó ambas pruebas
         }
         
-        // --- 'IsPointInsidePoly_v59' (NUEVA FUNCIÓN v59) ---
+        // --- 'IsPointInsidePoly_v60' (NUEVA FUNCIÓN v60) ---
         //
-        // Esta es la implementación robusta del algoritmo Ray-Casting
-        // que reemplaza a la versión 'v45' defectuosa.
+        // Esta es la implementación con el TYPO CORREGIDO
         //
-        private static bool IsPointInsidePoly_v59(List<Point2d> polygon, Point2d testPoint)
+        private static bool IsPointInsidePoly_v60(List<Point2d> polygon, Point2d testPoint)
         {
             bool result = false;
             int j = polygon.Count - 1; // El último vértice
@@ -440,17 +439,18 @@ namespace Civil3D_Phase1
                    || (polygon[j].Y < testPoint.Y && polygon[i].Y >= testPoint.Y) )
                 {
                     // Si el segmento cruza, calcular la intersección X
-                    // Evitar división por cero (aunque la condición 'if' anterior ya lo previene)
                     if (polygon[j].Y - polygon[i].Y != 0)
                     {
-                        // (testPoint.Y - polygon[i].Y) / (polygon[j].Y - polygon[i].Y) es el 't' (0 a 1)
-                        // (polygon[j].X - polygon[i].X) es el delta X
-                        // polygon[i].X es el X inicial
+                        //
+                        // --- ¡¡¡AQUÍ ESTABA EL ERROR!!! ---
+                        //
+                        // v59 (MAL): (testPoint.Y - testPoint.Y) <-- Esto es CERO
+                        // v60 (BIEN): (testPoint.Y - polygon[i].Y) 
+                        //
                         double x_intercept = polygon[i].X + (testPoint.Y - polygon[i].Y) * (polygon[j].X - polygon[i].X) / (polygon[j].Y - polygon[i].Y);
                         
                         if (x_intercept < testPoint.X)
                         {
-                            // El cruce está a la izquierda del punto. Invertir el resultado.
                             result = !result;
                         }
                     }
@@ -462,10 +462,7 @@ namespace Civil3D_Phase1
 
 
         // --- 'GetTessellatedVertices_v53' (FUNCIÓN ANTIGUA v53) ---
-        //
         // Mantenemos esta función de v53, ya que compilaba correctamente
-        // y usaba 'GetPointAtDist' (compatible con API antigua).
-        //
         private static List<Point2d> GetTessellatedVertices_v53(Curve curve)
         {
             List<Point2d> vertices = new List<Point2d>();
@@ -473,7 +470,7 @@ namespace Civil3D_Phase1
 
             try
             {
-                const double TESSELLATION_DISTANCE = 0.5; // 0.5m de precisión
+                const double TESSELLATION_DISTANCE = 0.5; 
                 double totalLength = curve.GetDistanceAtParameter(curve.EndParam);
                 double currentDistance = 0;
 
@@ -488,8 +485,8 @@ namespace Civil3D_Phase1
             }
             catch (System.Exception ex)
             {
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\n¡ERROR CRÍTICO al teselar curva (v53/59)!: {ex.Message}.");
-                vertices.Clear(); // Devuelve una lista vacía
+                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\n¡ERROR CRÍTICO al teselar curva (v53/60)!: {ex.Message}.");
+                vertices.Clear(); 
             }
 
             if (vertices.Count > 0 && vertices[0] != vertices[vertices.Count - 1])
