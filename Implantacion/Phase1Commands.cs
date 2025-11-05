@@ -46,7 +46,7 @@ namespace Civil3D_Phase1
             Database db = doc.Database;
 
             // --- CAMBIO DE VERSIÓN ---
-            ed.WriteMessage("\n--- Iniciando FASE 1 (v65 - Algoritmo 'Winding Number') ---");
+            ed.WriteMessage("\n--- Iniciando FASE 1 (v66 - Build x64 Corregido) ---");
 
             // --- PASO 1: Cargar Biblioteca de Trackers (Sin cambios) ---
             List<TrackerModel> trackerLibrary;
@@ -104,7 +104,7 @@ namespace Civil3D_Phase1
             if (netAreaId == ObjectId.Null) { ed.WriteMessage("\nERROR: No se pudo calcular el Área Neta (retranqueo)."); return; }
             ed.WriteMessage("\nÁrea Neta (retranqueo) calculada.");
 
-            // --- PASO 5: Generación de Layout (MODIFICADO v65) ---
+            // --- PASO 5: Generación de Layout (v66) ---
             ed.WriteMessage("\nCreando capas de salida...");
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -112,9 +112,9 @@ namespace Civil3D_Phase1
                 CreateLayer(db, tr, "TRACKERS_CORTOS", Color.FromRgb(255, 100, 0));
                 tr.Commit();
             }
-            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Winding v65) ---");
-            LayoutResult finalLayout = RunLayout_v65(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
-            if (finalLayout == null) { ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v65)."); return; }
+            ed.WriteMessage("\n--- Iniciando Paso 5: Generando Layout (Método Region v66) ---");
+            LayoutResult finalLayout = RunLayout_v66(db, ed, netAreaId, affectionIds, selectedTracker, pitchEO, pasoLibreNS);
+            if (finalLayout == null) { ed.WriteMessage("\nERROR: Fallo crítico durante la generación de Layout (v66)."); return; }
             if (finalLayout.TotalTrackers == 0) { ed.WriteMessage("\nAVISO: No caben trackers en el área válida."); return; }
             ed.WriteMessage("--- Generación de Layout Terminada ---");
             ed.WriteMessage("\n--- LAYOUT FINAL GENERADO ---");
@@ -127,7 +127,7 @@ namespace Civil3D_Phase1
             ed.WriteMessage("\n--- Iniciando Paso 6: Dibujando Layout ---");
             DrawFinalLayout(db, finalLayout);
             ed.WriteMessage("\n¡Trackers dibujados con éxito!");
-            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v65) ---");
+            ed.WriteMessage("\n--- PROCESO FASE 1 TERMINADO (v66) ---");
         }
 
         // --- Función Auxiliar 1 (SelectPolyline, v56) ---
@@ -259,221 +259,144 @@ namespace Civil3D_Phase1
         }
 
 
-        // --- 'RunLayout_v65' (MODIFICADO v65) ---
-        // Llama a las funciones de teselado v65 y colisión v65
-        private static LayoutResult RunLayout_v65(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
+        // --- 'RunLayout_v66' (Método 'Region' API 2024) ---
+        private static LayoutResult RunLayout_v66(Database db, Editor ed, ObjectId netAreaId, ObjectIdCollection affectionIds, TrackerModel tracker, double pitchEO, double offsetNS)
         {
             LayoutResult layout = new LayoutResult { OffsetNS = offsetNS, TrackersToDraw = new List<Polyline>() };
-            List<Point2d> netAreaVertices = new List<Point2d>();
-            List<List<Point2d>> affectionVerticesList = new List<List<Point2d>>();
+            Region validityRegion = null;
             Extents3d totalExtents;
-            
+
+            // --- 1. CREAR EL MAPA DE VALIDEZ (REGION) ---
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
+                    // 1a. Crear la Región base desde el Área Neta
                     Curve netAreaCurve = tr.GetObject(netAreaId, OpenMode.ForRead) as Curve;
                     if (netAreaCurve == null) { ed.WriteMessage("\nERROR: No se pudo leer la curva del Área Neta."); tr.Abort(); return null; }
                     totalExtents = netAreaCurve.GeometricExtents;
-
-                    // Usamos la función de teselado que SÍ compiló (de v53)
-                    netAreaVertices = GetTessellatedVertices_v65(netAreaCurve);
-
-                    foreach (ObjectId id in affectionIds)
-                    {
-                        Curve affCurve = tr.GetObject(id, OpenMode.ForRead) as Curve;
-                        if (affCurve != null)
-                        {
-                            affectionVerticesList.Add(GetTessellatedVertices_v65(affCurve));
-                        }
-                    }
                     
-                    // --- Bucle de Layout ---
-                    for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
+                    DBObjectCollection netCurveColl = new DBObjectCollection();
+                    netCurveColl.Add(netAreaCurve);
+                    
+                    DBObjectCollection regionColl = Region.CreateFromCurves(netCurveColl);
+                    if (regionColl.Count == 0) { ed.WriteMessage("\nERROR: No se pudo crear la Región del Área Neta."); tr.Abort(); return null; }
+                    validityRegion = regionColl[0] as Region;
+                    
+                    // 1b. Restar (Subtract) todas las afecciones
+                    foreach (ObjectId affId in affectionIds)
                     {
-                        double y = totalExtents.MinPoint.Y;
-                        while (y < totalExtents.MaxPoint.Y)
+                        Curve affCurve = tr.GetObject(affId, OpenMode.ForRead) as Curve;
+                        if (affCurve == null) continue;
+                        DBObjectCollection affCurveColl = new DBObjectCollection();
+                        affCurveColl.Add(affCurve);
+                        DBObjectCollection affRegionColl = Region.CreateFromCurves(affCurveColl);
+                        if (affRegionColl.Count > 0)
                         {
-                            Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
-                            
-                            // Test de Colisión (Largo) - LLAMA A LA NUEVA LÓGICA v65
-                            if (IsTrackerValid_4Corners_v65(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
-                            {
-                                layout.LongTrackers++;
-                                layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
-                                y += tracker.longitud_largo + offsetNS; 
-                            }
-                            else
-                            {
-                                // Test de Colisión (Corto) - LLAMA A LA NUEVA LÓGICA v65
-                                if (tracker.longitud_corto > 0.01)
-                                {
-                                    centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
-                                    if (IsTrackerValid_4Corners_v65(netAreaVertices, affectionVerticesList, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
-                                    {
-                                        layout.ShortTrackers++;
-                                        layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
-                                        y += tracker.longitud_corto + offsetNS;
-                                    }
-                                    else { y += 1.0; } // Avanza un poco
-                                }
-                                else { y += 1.0; } // Avanza un poco
-                            }
+                            Region affRegion = affRegionColl[0] as Region;
+                            // --- API MODERNA (2024) ---
+                            validityRegion.BooleanOperation(BooleanOperationType.Subtract, affRegion);
+                            affRegion.Dispose();
                         }
                     }
                 }
                 catch (System.Exception ex)
                 {
-                     ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v65): {ex.Message}");
-                     layout = null; // Fallar
+                    ed.WriteMessage($"\nERROR CRÍTICO al crear Regiones (v66): {ex.Message}");
+                    if (validityRegion != null) validityRegion.Dispose();
+                    tr.Abort(); 
+                    return null; 
                 }
-                finally
-                {
-                    tr.Abort(); // Solo hemos leído datos
-                }
-            } // Fin del using (Transaction)
+                tr.Abort(); // No queremos guardar las regiones, solo usarlas
+            } // La transacción se cierra y se Aborta aquí
 
-            if (layout != null)
+
+            // --- 2. ITERAR LA GRILLA (usando la Región) ---
+            if (validityRegion == null || validityRegion.IsDisposed)
             {
-                layout.TotalTrackers = layout.LongTrackers + layout.ShortTrackers;
+                ed.WriteMessage("\nERROR: La Región de Validez es nula. Cancelando.");
+                return null;
             }
+
+            try
+            {
+                // Bucle E-O (X) - Filas
+                for (double x = totalExtents.MinPoint.X; x < totalExtents.MaxPoint.X; x += pitchEO)
+                {
+                    // Bucle N-S (Y) - Trackers
+                    double y = totalExtents.MinPoint.Y;
+                    while (y < totalExtents.MaxPoint.Y)
+                    {
+                        Point3d centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_largo / 2.0), 0);
+                        
+                        // 4. Test de Colisión NATIVO (v66)
+                        if (IsTrackerValid_4Corners_v66(validityRegion, centerPt, tracker.longitud_largo, tracker.ancho_huella_ns))
+                        {
+                            layout.LongTrackers++;
+                            layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_largo, tracker.ancho_huella_ns, "TRACKERS_LARGOS"));
+                            y += tracker.longitud_largo + offsetNS; 
+                        }
+                        else
+                        {
+                            if (tracker.longitud_corto > 0.01)
+                            {
+                                centerPt = new Point3d(x + (tracker.ancho_huella_ns / 2.0), y + (tracker.longitud_corto / 2.0), 0);
+                                if (IsTrackerValid_4Corners_v66(validityRegion, centerPt, tracker.longitud_corto, tracker.ancho_huella_ns))
+                                {
+                                    layout.ShortTrackers++;
+                                    layout.TrackersToDraw.Add(CreateTrackerPolyline_NS(centerPt, tracker.longitud_corto, tracker.ancho_huella_ns, "TRACKERS_CORTOS"));
+                                    y += tracker.longitud_corto + offsetNS;
+                                }
+                                else { y += 1.0; } // Avanza un poco
+                            }
+                            else { y += 1.0; } // Avanza un poco
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                 ed.WriteMessage($"\nERROR CRÍTICO durante el bucle de layout (v66): {ex.Message}");
+                 return null;
+            }
+            finally
+            {
+                // Limpiar la Región que creamos
+                if(validityRegion != null && !validityRegion.IsDisposed)
+                {
+                    validityRegion.Dispose();
+                }
+            }
+
+            layout.TotalTrackers = layout.LongTrackers + layout.ShortTrackers;
             return layout;
         }
 
-        // --- 'IsTrackerValid_4Corners_v65' (NUEVA FUNCIÓN v65) ---
-        // Llama al algoritmo de colisión robusto v65
-        private static bool IsTrackerValid_4Corners_v65(List<Point2d> netArea, List<List<Point2d>> affections, Point3d center, double length, double width)
+        // --- 'IsTrackerValid_4Corners_v66' (NUEVA FUNCIÓN v66) ---
+        //
+        // Esta función usa el método moderno 'Region.Contains()' de la API 2024.
+        //
+        private static bool IsTrackerValid_4Corners_v66(Region validRegion, Point3d center, double length, double width)
         {
             double halfLen = length / 2.0; // Largo (Y)
             double halfWid = width / 2.0;  // Ancho (X)
             
-            // Puntos 2D
-            Point2d p1 = new Point2d(center.X - halfWid, center.Y - halfLen); // Abajo-Izquierda
-            Point2d p2 = new Point2d(center.X + halfWid, center.Y - halfLen); // Abajo-Derecha
-            Point2d p3 = new Point2d(center.X + halfWid, center.Y + halfLen); // Arriba-Derecha
-            Point2d p4 = new Point2d(center.X - halfWid, center.Y + halfLen); // Arriba-Izquierda
+            Point3d p1 = new Point3d(center.X - halfWid, center.Y - halfLen, 0); // Abajo-Izquierda
+            Point3d p2 = new Point3d(center.X + halfWid, center.Y - halfLen, 0); // Abajo-Derecha
+            Point3d p3 = new Point3d(center.X + halfWid, center.Y + halfLen, 0); // Arriba-Derecha
+            Point3d p4 = new Point3d(center.X - halfWid, center.Y + halfLen, 0); // Arriba-Izquierda
 
-            // Lógica de validación
-            if (!IsPointValid_v65(netArea, affections, p1)) return false;
-            if (!IsPointValid_v65(netArea, affections, p2)) return false;
-            if (!IsPointValid_v65(netArea, affections, p3)) return false;
-            if (!IsPointValid_v65(netArea, affections, p4)) return false;
+            Tolerance tol = new Tolerance(1e-6, 1e-6); 
 
-            return true; // Todas las esquinas están DENTRO
-        }
-        
-        // --- 'IsPointValid_v65' (NUEVA FUNCIÓN v65) ---
-        // Llama al algoritmo de colisión robusto v65
-        private static bool IsPointValid_v65(List<Point2d> netArea, List<List<Point2d>> affections, Point2d testPoint)
-        {
-            // Condición 1: Debe estar DENTRO del área neta
-            if (netArea.Count < 3 || !IsPointInside_v65_Winding(netArea, testPoint)) { return false; }
+            //
+            // --- API MODERNA (2024) ---
+            //
+            if (!validRegion.Contains(p1, tol)) return false;
+            if (!validRegion.Contains(p2, tol)) return false;
+            if (!validRegion.Contains(p3, tol)) return false;
+            if (!validRegion.Contains(p4, tol)) return false;
 
-            // Condición 2: NO debe estar dentro de NINGUNA afección
-            foreach (List<Point2d> affPoly in affections)
-            {
-                if (affPoly.Count >= 3 && IsPointInside_v65_Winding(affPoly, testPoint)) { return false; }
-            }
-
-            return true; // Pasó ambas pruebas
-        }
-        
-        // --- 'IsPointInside_v65_Winding' (NUEVA FUNCIÓN v65) ---
-        //
-        // Esta es la implementación robusta del algoritmo "Winding Number"
-        // que reemplaza a las versiones 'Ray-Casting' defectuosas.
-        //
-        private static bool IsPointInside_v65_Winding(List<Point2d> polygon, Point2d p)
-        {
-            int wn = 0; // Winding number
-            int n = polygon.Count;
-
-            // Bucle por todos los segmentos (p[i] a p[j])
-            for (int i = 0, j = n - 1; i < n; j = i++)
-            {
-                Point2d p1 = polygon[i];
-                Point2d p2 = polygon[j];
-
-                if (p1.Y <= p.Y) // El punto inicial del segmento está por debajo del punto
-                {
-                    if (p2.Y > p.Y) // El punto final está por encima (Cruce Ascendente)
-                    {
-                        // Comprobar si el punto p está a la izquierda del segmento
-                        if (IsLeft(p1, p2, p) > 0)
-                        {
-                            wn++; // Contar cruce ascendente a la izquierda
-                        }
-                    }
-                }
-                else // El punto inicial del segmento (p1.Y) está por encima del punto
-                {
-                    if (p2.Y <= p.Y) // El punto final está por debajo (Cruce Descendente)
-                    {
-                        // Comprobar si el punto p está a la derecha del segmento
-                        if (IsLeft(p1, p2, p) < 0)
-                        {
-                            wn--; // Contar cruce descendente a la derecha
-                        }
-                    }
-                }
-            }
-            
-            // Si wn es != 0, el punto está dentro.
-            return wn != 0;
-        }
-
-        // --- Función Auxiliar para 'IsPointInside_v65_Winding' ---
-        // Comprueba si un punto p2 está a la izquierda, sobre, o a la derecha
-        // de la línea infinita definida por p0 y p1.
-        // > 0 para p2 a la izquierda
-        // = 0 para p2 en la línea
-        // < 0 para p2 a la derecha
-        private static double IsLeft(Point2d p0, Point2d p1, Point2d p2)
-        {
-            return (p1.X - p0.X) * (p2.Y - p0.Y) - (p2.X - p0.X) * (p1.Y - p0.Y);
-        }
-
-
-        // --- 'GetTessellatedVertices_v65' (MODIFICADO v65) ---
-        //
-        // Mantenemos esta función de v53 (que compila), pero
-        // aumentamos la precisión. 0.5m era demasiado grande.
-        //
-        private static List<Point2d> GetTessellatedVertices_v65(Curve curve)
-        {
-            List<Point2d> vertices = new List<Point2d>();
-            if (curve == null) return vertices;
-
-            try
-            {
-                // Aumentamos la precisión. 50cm era demasiado grande.
-                // Usamos 10cm (0.1m).
-                const double TESSELLATION_DISTANCE = 0.1; 
-                
-                double totalLength = curve.GetDistanceAtParameter(curve.EndParam);
-                double currentDistance = 0;
-
-                while (currentDistance < totalLength)
-                {
-                    Point3d pt3d = curve.GetPointAtDist(currentDistance);
-                    vertices.Add(new Point2d(pt3d.X, pt3d.Y));
-                    currentDistance += TESSELLATION_DISTANCE;
-                }
-                Point3d endPt = curve.GetPointAtDist(totalLength);
-                vertices.Add(new Point2d(endPt.X, endPt.Y));
-            }
-            catch (System.Exception ex)
-            {
-                Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\n¡ERROR CRÍTICO al teselar curva (v65)!: {ex.Message}.");
-                vertices.Clear(); 
-            }
-
-            if (vertices.Count > 0 && vertices[0] != vertices[vertices.Count - 1])
-            {
-                vertices.Add(vertices[0]);
-            }
-
-            return vertices;
+            return true; // Todas las esquinas están DENTRO de la Región válida
         }
 
 
